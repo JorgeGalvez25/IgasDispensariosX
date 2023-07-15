@@ -36,10 +36,14 @@ type
     PosicionActual:integer;
     UltimoStatus:string;
     SnPosCarga:integer;
-    SnImporte,SnLitros:real
+    SnImporte,SnLitros:real;
     MaxPosCarga:integer;
     MaxPosCargaActiva:integer;
     SegundosFinv:Integer;
+    swflujostd,swflumin:Boolean;
+    TAdic31   :array[1..32] of real;
+    TAdic32   :array[1..32] of real;
+    TAdic33   :array[1..32] of real;
   public
     ListaLog:TStringList;
     ListaLogPetRes:TStringList;
@@ -100,9 +104,12 @@ type
     function IniciaPSerial(datosPuerto:string):string;
     function EstadoPosiciones(msj: string):string;
     function TotalesBomba(msj: string):string;
+    function FluStd(msj: string):string;
+    function FluMin(msj: string):string;
     function Shutdown:string;
     function Terminar:string;
     procedure GuardaLogComandos;
+    procedure ProcesaFlujo(xpos:integer;swarriba:boolean);
     { Public declarations }
   end;
 
@@ -121,6 +128,9 @@ type
        TPos     :array[1..MCxP] of integer;
        TotalLitros  :array[1..MCxP] of real;
        TMang    :array[1..MCxP] of integer;
+       TAjuPos   :array[1..MCxP] of integer;
+       TAdic     :array[1..MCxP] of integer;
+       TCmndZ    :array[1..MCxP] of string[14];
        SwDesp,SwA,SwPrec   :boolean;
        HoraFinv,
        Hora         :TDateTime;
@@ -148,6 +158,8 @@ type
        Bloqueda:Boolean;
        CombActual:Integer;
        MangActual:Integer;
+       swflujovehiculo:boolean;
+       flujovehiculo  :integer;       
      end;
 
      RegCmnd = record
@@ -178,7 +190,8 @@ type
     PAYMENT_e, TRANSACTION_e, STATUS_e,
     TOTALS_e, HALT_e, RUN_e, SHUTDOWN_e,
     TERMINATE_e, STATE_e, TRACE_e,
-    SAVELOGREQ_e, RESPCMND_e, LOG_e, LOGREQ_e);
+    SAVELOGREQ_e, RESPCMND_e, EJECCMND_e,
+    FLUSTD_e, FLUMIN_e, LOG_e, LOGREQ_e);
 
 
 var
@@ -205,10 +218,11 @@ var
   Token        :string;
   key:OleVariant;
   claveCre,key3DES:string;
+  Licencia3Ok  :Boolean;
 
 implementation
 
-uses StrUtils, TypInfo;
+uses StrUtils, TypInfo, Math;
 
 {$R *.DFM}
 
@@ -285,110 +299,152 @@ begin
       Socket.SendText('1');
       Exit;
     end;
-    mensaje:=Key.Decrypt(ExtractFilePath(ParamStr(0)),key3DES,mensaje);
-    AgregaLogPetRes('R '+mensaje);
-    for i:=1 to Length(mensaje) do begin
-      if mensaje[i]=#2 then begin
-        mensaje:=Copy(mensaje,i+1,Length(mensaje));
-        Break;
-      end;
-    end;
-    for i:=Length(mensaje) downto 1 do begin              
-      if mensaje[i]=#3 then begin
-        checksum:=Copy(mensaje,i+1,4);
-        mensaje:=Copy(mensaje,1,i-1);
-        Break;                
-      end;
-    end;
-    chks_valido:=checksum=CRC16(mensaje);
-    if mensaje[1]='|' then
-      Delete(mensaje,1,1);
-    if mensaje[Length(mensaje)]='|' then
-      Delete(mensaje,Length(mensaje),1);
-    if NoElemStrSep(mensaje,'|')>=2 then begin  
-      if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))<>'DISPENSERS' then begin
-        Responder(Socket,'DISPENSERS|False|Este servicio solo procesa solicitudes de dispensarios|');
-        Exit;
-      end;
-
-      comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
-
-      if not chks_valido then begin
-        Responder(Socket,'DISPENSERS|'+comando+'|False|Checksum invalido|');
-        Exit;
-      end;
-
-      if NoElemStrSep(mensaje,'|')>2 then begin
-        for i:=3 to NoElemStrSep(mensaje,'|') do
-          parametro:=parametro+ExtraeElemStrSep(mensaje,i,'|')+'|';
-
-        if parametro[Length(parametro)]='|' then
-          Delete(parametro,Length(parametro),1);
-      end;
+    if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))='DISPENSERSX' then begin
+      AgregaLogPetRes('R '+mensaje);
 
       metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
 
-      case metodoEnum of
-        NOTHING_e:
-          Responder(Socket, 'DISPENSERS|NOTHING|True|');
-        INITIALIZE_e:
-          Responder(Socket, 'DISPENSERS|INITIALIZE|'+Inicializar(parametro));
-        PARAMETERS_e:
-          Responder(Socket, 'DISPENSERS|PARAMETERS|'+Parametros(parametro));
-        LOGIN_e:
-          Responder(Socket, 'DISPENSERS|LOGIN|'+Login(parametro));
-        LOGOUT_e:
-          Responder(Socket, 'DISPENSERS|LOGOUT|'+Logout);
-        PRICES_e:
-          Responder(Socket, 'DISPENSERS|PRICES|'+IniciaPrecios(parametro));
-        AUTHORIZE_e:
-          Responder(Socket, 'DISPENSERS|AUTHORIZE|'+AutorizarVenta(parametro));
-        STOP_e:
-          Responder(Socket, 'DISPENSERS|STOP|'+DetenerVenta(parametro));
-        START_e:
-          Responder(Socket, 'DISPENSERS|START|'+ReanudarVenta(parametro));
-        SELFSERVICE_e:
-          Responder(Socket, 'DISPENSERS|SELFSERVICE|'+ActivaModoPrepago(parametro));
-        FULLSERVICE_e:
-          Responder(Socket, 'DISPENSERS|FULLSERVICE|'+DesactivaModoPrepago(parametro));
-        BLOCK_e:
-          Responder(Socket, 'DISPENSERS|BLOCK|'+Bloquear(parametro));
-        UNBLOCK_e:
-          Responder(Socket, 'DISPENSERS|UNBLOCK|'+Desbloquear(parametro));
-        PAYMENT_e:
-          Responder(Socket, 'DISPENSERS|PAYMENT|'+FinVenta(parametro));
-        TRANSACTION_e:
-          Responder(Socket, 'DISPENSERS|TRANSACTION|'+TransaccionPosCarga(parametro));
-        STATUS_e:
-          Responder(Socket, 'DISPENSERS|STATUS|'+EstadoPosiciones(parametro));
-        TOTALS_e:
-          Responder(Socket, 'DISPENSERS|TOTALS|'+TotalesBomba(parametro));
-        HALT_e:
-          Responder(Socket, 'DISPENSERS|HALT|'+Detener);
-        RUN_e:
-          Responder(Socket, 'DISPENSERS|RUN|'+Iniciar);
-        SHUTDOWN_e:
-          Responder(Socket, 'DISPENSERS|SHUTDOWN|'+Shutdown);
-        TERMINATE_e:
-          Responder(Socket, 'DISPENSERS|TERMINATE|'+Terminar);
-        STATE_e:
-          Responder(Socket, 'DISPENSERS|STATE|'+ObtenerEstado);
-        TRACE_e:
-          Responder(Socket, 'DISPENSERS|TRACE|'+GuardarLog);
-        SAVELOGREQ_e:
-          Responder(Socket, 'DISPENSERS|SAVELOGREQ|'+GuardarLogPetRes);
-        RESPCMND_e:
-          Responder(Socket, 'DISPENSERS|RESPCMND|'+RespuestaComando(parametro));
-        LOG_e:
-          Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOG|'+ObtenerLog(StrToIntDef(parametro, 0))));
-        LOGREQ_e:
-          Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOGREQ|'+ObtenerLogPetRes(StrToIntDef(parametro, 0))));
+      if NoElemStrSep(mensaje,'|')>=2 then begin
+
+        comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
+
+        if not chks_valido then begin
+          Responder(Socket,'DISPENSERS|'+comando+'|False|Checksum invalido|');
+          Exit;
+        end;
+
+        if NoElemStrSep(mensaje,'|')>2 then begin
+          for i:=3 to NoElemStrSep(mensaje,'|') do
+            parametro:=parametro+ExtraeElemStrSep(mensaje,i,'|')+'|';
+
+          if parametro[Length(parametro)]='|' then
+            Delete(parametro,Length(parametro),1);
+        end;
+
+        metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
+
+        case metodoEnum of
+          EJECCMND_e:
+            Socket.SendText('DISPENSERSX|EJECCMND|True|'+IntToStr(EjecutaComando(parametro))+'|');
+          FLUSTD_e:
+            Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro)+'|');
+          FLUMIN_e:
+            Socket.SendText('DISPENSERSX|FLUMIN|'+FluMin(parametro)+'|');
+        else
+          Socket.SendText('DISPENSERSX|'+comando+'|False|Comando desconocido|');
+        end;
+      end
       else
-        Responder(Socket, 'DISPENSERS|'+comando+'|False|Comando desconocido|');
-      end;
+        Socket.SendText('DISPENSERSX|'+mensaje+'|False|Comando desconocido|');
     end
-    else
-      Responder(Socket,'DISPENSERS|'+mensaje+'|False|Comando desconocido|');
+    else begin
+      mensaje:=Key.Decrypt(ExtractFilePath(ParamStr(0)),key3DES,mensaje);
+      AgregaLogPetRes('R '+mensaje);
+      for i:=1 to Length(mensaje) do begin
+        if mensaje[i]=#2 then begin
+          mensaje:=Copy(mensaje,i+1,Length(mensaje));
+          Break;
+        end;
+      end;
+      for i:=Length(mensaje) downto 1 do begin
+        if mensaje[i]=#3 then begin
+          checksum:=Copy(mensaje,i+1,4);
+          mensaje:=Copy(mensaje,1,i-1);
+          Break;
+        end;
+      end;
+      chks_valido:=checksum=CRC16(mensaje);
+      if mensaje[1]='|' then
+        Delete(mensaje,1,1);
+      if mensaje[Length(mensaje)]='|' then
+        Delete(mensaje,Length(mensaje),1);
+      if NoElemStrSep(mensaje,'|')>=2 then begin
+        if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))<>'DISPENSERS' then begin
+          Responder(Socket,'DISPENSERS|False|Este servicio solo procesa solicitudes de dispensarios|');
+          Exit;
+        end;
+
+        comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
+
+        if not chks_valido then begin
+          Responder(Socket,'DISPENSERS|'+comando+'|False|Checksum invalido|');
+          Exit;
+        end;
+
+        if NoElemStrSep(mensaje,'|')>2 then begin
+          for i:=3 to NoElemStrSep(mensaje,'|') do
+            parametro:=parametro+ExtraeElemStrSep(mensaje,i,'|')+'|';
+
+          if parametro[Length(parametro)]='|' then
+            Delete(parametro,Length(parametro),1);
+        end;
+
+        metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
+
+        case metodoEnum of
+          NOTHING_e:
+            Responder(Socket, 'DISPENSERS|NOTHING|True|');
+          INITIALIZE_e:
+            Responder(Socket, 'DISPENSERS|INITIALIZE|'+Inicializar(parametro));
+          PARAMETERS_e:
+            Responder(Socket, 'DISPENSERS|PARAMETERS|'+Parametros(parametro));
+          LOGIN_e:
+            Responder(Socket, 'DISPENSERS|LOGIN|'+Login(parametro));
+          LOGOUT_e:
+            Responder(Socket, 'DISPENSERS|LOGOUT|'+Logout);
+          PRICES_e:
+            Responder(Socket, 'DISPENSERS|PRICES|'+IniciaPrecios(parametro));
+          AUTHORIZE_e:
+            Responder(Socket, 'DISPENSERS|AUTHORIZE|'+AutorizarVenta(parametro));
+          STOP_e:
+            Responder(Socket, 'DISPENSERS|STOP|'+DetenerVenta(parametro));
+          START_e:
+            Responder(Socket, 'DISPENSERS|START|'+ReanudarVenta(parametro));
+          SELFSERVICE_e:
+            Responder(Socket, 'DISPENSERS|SELFSERVICE|'+ActivaModoPrepago(parametro));
+          FULLSERVICE_e:
+            Responder(Socket, 'DISPENSERS|FULLSERVICE|'+DesactivaModoPrepago(parametro));
+          BLOCK_e:
+            Responder(Socket, 'DISPENSERS|BLOCK|'+Bloquear(parametro));
+          UNBLOCK_e:
+            Responder(Socket, 'DISPENSERS|UNBLOCK|'+Desbloquear(parametro));
+          PAYMENT_e:
+            Responder(Socket, 'DISPENSERS|PAYMENT|'+FinVenta(parametro));
+          TRANSACTION_e:
+            Responder(Socket, 'DISPENSERS|TRANSACTION|'+TransaccionPosCarga(parametro));
+          STATUS_e:
+            Responder(Socket, 'DISPENSERS|STATUS|'+EstadoPosiciones(parametro));
+          TOTALS_e:
+            Responder(Socket, 'DISPENSERS|TOTALS|'+TotalesBomba(parametro));
+          HALT_e:
+            Responder(Socket, 'DISPENSERS|HALT|'+Detener);
+          RUN_e:
+            Responder(Socket, 'DISPENSERS|RUN|'+Iniciar);
+          SHUTDOWN_e:
+            Responder(Socket, 'DISPENSERS|SHUTDOWN|'+Shutdown);
+          TERMINATE_e:
+            Responder(Socket, 'DISPENSERS|TERMINATE|'+Terminar);
+          STATE_e:
+            Responder(Socket, 'DISPENSERS|STATE|'+ObtenerEstado);
+          TRACE_e:
+            Responder(Socket, 'DISPENSERS|TRACE|'+GuardarLog);
+          SAVELOGREQ_e:
+            Responder(Socket, 'DISPENSERS|SAVELOGREQ|'+GuardarLogPetRes);
+          EJECCMND_e:
+            Responder(Socket, 'DISPENSERS|EJECCMND|True|'+IntToStr(EjecutaComando(parametro))+'|');
+          RESPCMND_e:
+            Responder(Socket, 'DISPENSERS|RESPCMND|'+RespuestaComando(parametro));
+          LOG_e:
+            Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOG|'+ObtenerLog(StrToIntDef(parametro, 0))));
+          LOGREQ_e:
+            Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOGREQ|'+ObtenerLogPetRes(StrToIntDef(parametro, 0))));
+        else
+          Responder(Socket, 'DISPENSERS|'+comando+'|False|Comando desconocido|');
+        end;
+      end
+      else
+        Responder(Socket,'DISPENSERS|'+mensaje+'|False|Comando desconocido|');
+    end;
   except
     on e:Exception do begin
       if (claveCre<>'') and (key3DES<>'') then
@@ -579,6 +635,8 @@ begin
       precio:=0;
       for j:=1 to MCxP do
         TotalLitros[j]:=0;
+      for j:=1 to 4 do
+        TAjuPos[j]:=0;
       SwCargando:=false;
       SwCargaTotales:=true;
       IntentosTotales:=0;
@@ -623,6 +681,12 @@ begin
             else begin
               TMang[NoComb]:=mangueras.Child[j].Field['HoseId'].Value;
               TPos[NoComb]:=mangueras.Child[j].Field['HoseId'].Value;
+            end;
+            case TPos[NoComb] of
+              1:TAjuPos[TPos[NoComb]]:=10;
+              2:TAjuPos[TPos[NoComb]]:=13;
+              else
+              TAjuPos[TPos[NoComb]]:=12;
             end;
           end;
         end;
@@ -734,13 +798,14 @@ var lin,ss,ss2,rsp,rsp2,
     simp,spre,sval  :string[20];
     claveCmnd:Integer;
     k:Integer;
-    i,j,xpos,ii     :integer;
+    i,j,xpos,xcmb,ii     :integer;
     XMANG,XCTE,XVEHI,
     xp,xpr,xcomb,xfolio:integer;
     xLista:TStrings;
     ximporte,
     ximpo,xdif,
-    xprecio,xvol    :real;
+    xprecio,xvol,
+    xadic    :real;
     swerr           :boolean;
     totlts:array[1..4] of real;
 begin
@@ -809,6 +874,14 @@ begin
                    if swprec then
                      swprec:=false;
                    if estatusant<>1 then begin
+                     if (swflujostd) then begin
+                       ProcesaFlujo(xpos,false);
+                       esperamiliseg(100);
+                     end;
+                     if swflujovehiculo then begin
+                       swflujovehiculo:=false;
+                       swadic:=true;
+                     end;
                      SwPresetHora:=false;
                      //SwArosMag:=false;
                      //PosAutorizada:=0;
@@ -1325,6 +1398,57 @@ begin
               SwAplicaCmnd:=False;
           end;
         end
+        // CMND: ACTIVA FLUJO ESTANDAR
+        else if ss='FLUSTD' then begin  // FLUJO ESTANDAR
+          if (Licencia3Ok) then begin
+            rsp:='OK';
+            for xpos:=1 to MaxPosCargaActiva do begin
+              if xpos in [1..MaxPosCargaActiva] then if TPosCarga[xpos].estatus<>0 then begin
+                // Ver 4.4
+                for xcmb:=1 to TPosCarga[xpos].NoComb do begin
+                  xp:=TPosCarga[xpos].TPos[xcmb];
+                  ss:='Z'+IntToClaveNum(xpos,2);
+                  ss:=ss+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4);
+                  case xp of
+                    1:xadic:=10*TAdic31[xpos]+TPosCarga[xpos].Tadic[xp]/100;
+                    2:xadic:=10*TAdic32[xpos]+TPosCarga[xpos].Tadic[xp]/100;
+                    else xadic:=10*TAdic33[xpos]+TPosCarga[xpos].Tadic[xp]/100;
+                  end;
+                  if xadic>9.5 then
+                    xadic:=9.99;
+                  if xadic>0 then
+                    sval:='+'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)))
+                  else
+                    sval:='-'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)));
+                  ss:=ss+sval;
+                  //ComandoConsolaBuff(ss,true);
+                  TPosCarga[xpos].TCmndZ[xp]:=ss;
+                end;
+                // Fin ver4.4
+                SwFlujoStd:=true;
+              end;
+            end;
+          end
+          else begin // if licencia2ok
+            rsp:='Opción no Habilitada';
+          end;
+        end
+        // CMND: ACTIVA FLUJO MINIMO
+        else if ss='FLUMIN' then begin // FLUJO MINIMO
+          if (Licencia3Ok) then begin
+            if not swflumin then begin
+              swflumin:=true;
+              rsp:='OK';
+              for xpos:=1 to MaxPosCargaActiva do begin
+                if (xpos<=MaximoDePosiciones) then if TPosCarga[xpos].estatus<>0 then
+                  ProcesaFlujo(xpos,false);
+              end;
+            end;
+          end
+          else begin // if licencia2ok
+            rsp:='Opción no Habilitada';
+          end;
+        end
         else rsp:='Comando no Soportado o no Existe';
 
         if SwAplicaCmnd then begin
@@ -1355,6 +1479,10 @@ begin
     rsp:='Posicion Bloqueada';
     exit;
   end;
+  if (swflujostd)and(not TPosCarga[xpos].swflujovehiculo) then begin
+    ProcesaFlujo(xpos,true);
+    esperamiliseg(100);
+  end;  
   if SnImporte<>9999 then begin
     ss:='K'+IntToClaveNum(xpos,2)+'2'; // Modo PrePago
     ComandoConsolaBuff(ss,false);
@@ -2126,6 +2254,64 @@ begin
       Exception.Create('GuardaLogComandos: '+e.Message);
   end;
 
+end;
+
+function Togcvdispensarios_bennett.FluStd(msj: string): string;
+var
+  i,xpos:Integer;
+  mangueras:string;
+begin
+  try
+    for i:=1 to NoElemStrSep(msj,';') do begin
+      xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
+      mangueras:=ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':');
+      TAdic31[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,1,','),0);
+      TAdic32[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,2,','),0);
+      TAdic33[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,3,','),0);
+    end;
+    Result:=IntToStr(EjecutaComando('FLUSTD'));
+  except
+    on e:Exception do
+      Result:='Error FLUSTD: '+e.Message;
+  end;
+end;
+
+function Togcvdispensarios_bennett.FluMin(msj: string): string;
+begin
+  try
+    Result:=IntToStr(EjecutaComando('FLUMIN'));
+  except
+    on e:Exception do
+      Result:='Error FLUMIN: '+e.Message;
+  end;
+end;
+
+procedure Togcvdispensarios_bennett.ProcesaFlujo(xpos: integer;
+  swarriba: boolean);
+var xp,xcmb:integer;
+    xadic:real;
+    ss,sval:string;
+begin
+  for xcmb:=1 to TPosCarga[xpos].NoComb do begin
+    xp:=TPosCarga[xpos].TPos[xcmb];
+    if swarriba then begin  // arriba
+      if swflujostd then
+        ComandoConsolaBuff(TPosCarga[xpos].TCmndZ[xp],true);
+    end
+    else begin // abajo
+      xadic:=TPosCarga[xpos].Tadic[xp]/100;
+      if xadic>9.5 then
+        xadic:=9.99;
+      if xadic>0 then
+        sval:='+'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)))
+      else
+        sval:='-'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)));
+      ss:='Z'+IntToClaveNum(xpos,2)+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4)+sval;
+      ComandoConsolaBuff(ss,false);
+      if swflumin then
+        ComandoConsolaBuff(ss,false);
+    end;
+  end;
 end;
 
 end.
