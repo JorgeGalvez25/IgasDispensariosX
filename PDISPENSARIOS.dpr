@@ -12,7 +12,8 @@ uses
   IdHash in 'IdHash.pas',
   OG_Hasp in 'OG_Hasp.pas',
   UIGASWAYNE in 'UIGASWAYNE.pas' {ogcvdispensarios_wayne: TService},
-  UIGASHONGYANG in 'UIGASHONGYANG.pas' {ogcvdispensarios_hongyang: TService};
+  UIGASHONGYANG in 'UIGASHONGYANG.pas' {ogcvdispensarios_hongyang: TService},
+  ULIBLICENCIAS in 'ULIBLICENCIAS.pas';
 
 {$R *.RES}
 var
