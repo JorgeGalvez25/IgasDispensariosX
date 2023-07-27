@@ -4,7 +4,7 @@ interface
 
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, SvcMgr, Dialogs,
-  ScktComp, IniFiles, ULIBGRAL, OoMisc, AdPort, DB, RxMemDS, Variants,
+  ScktComp, IniFiles, ULIBGRAL, OoMisc, AdPort, DB, RxMemDS, Variants, ULIBLICENCIAS,
   ExtCtrls, uLkJSON, CRCs, IdHashMessageDigest, IdHash, ActiveX, ComObj;
 
   const
@@ -52,6 +52,9 @@ type
     licencia:string;
     detenido:Boolean;
     estado:Integer;
+    razonSocial,licAdic:String;
+    esLicTemporal:Boolean;
+    fechaVenceLic:TDateTime;
   // CONTROL TRAFICO COMANDOS
     ListaCmnd    :TStrings;
     LinCmnd      :string;
@@ -132,6 +135,7 @@ type
        TAdic     :array[1..MCxP] of integer;
        TCmndZ    :array[1..MCxP] of string[14];
        SwDesp,SwA,SwPrec   :boolean;
+       SwAdic       :boolean;
        HoraFinv,
        Hora         :TDateTime;
        SwInicio,
@@ -159,7 +163,7 @@ type
        CombActual:Integer;
        MangActual:Integer;
        swflujovehiculo:boolean;
-       flujovehiculo  :integer;       
+       flujovehiculo  :Real;
      end;
 
      RegCmnd = record
@@ -256,6 +260,18 @@ begin
     ListaLog:=TStringList.Create;
     ListaLogPetRes:=TStringList.Create;
     ListaComandos:=TStringList.Create;
+
+    //LicenciaAdic
+    razonSocial:=config.ReadString('CONF','RazonSocial','');
+    licAdic:=config.ReadString('CONF','LicCVL7','');
+    esLicTemporal:=config.ReadString('CONF','LicCVL7Temp','No')='Si';
+    fechaVenceLic:=StrToDate(config.ReadString('CONF','LicCVL7FechaVence','01/01/1900'));
+
+    try
+      Licencia3Ok:=LicenciaValida2(razonSocial,'CVL7','3.1','Abierta',licAdic,1,esLicTemporal,fechaVenceLic);
+    except
+      Licencia3Ok:=false;
+    end;
 
     CoInitialize(nil);
     Key:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
@@ -652,6 +668,7 @@ begin
       PresetImpoN:=0;
       PresetComb:=0;
       SwPresetHora:=false;
+      SwAdic:=false;
     end;
 
     for i:=0 to posiciones.Count-1 do begin
@@ -808,6 +825,7 @@ var lin,ss,ss2,rsp,rsp2,
     xadic    :real;
     swerr           :boolean;
     totlts:array[1..4] of real;
+    SnImporteStr,SnLitrosStr,decImporteStr:String;
 begin
   if (LineaTimer='') then
     exit;
@@ -955,6 +973,10 @@ begin
                3:if (not SwDesHabilitado)and(ModoOpera='Normal') then begin
                    if ContPreset<=0 then begin
                      FinVenta:=0;
+                     if (swflujostd) and (not swflujovehiculo) then begin
+                       ProcesaFlujo(xpos,true);
+                       esperamiliseg(100);
+                     end;
                      ss:='S'+IntToClaveNum(xpos,2); // Autorizar
                      ComandoConsolaBuff(ss,false);
                      presetimpo:=0;presetimpon:=0;
@@ -1191,6 +1213,7 @@ begin
               if (TPosCarga[SnPosCarga].estatus in [1,3])and(not TPosCarga[SnPosCarga].SwOCC)and(not swerr) then begin
                 TPosCarga[SnPosCarga].SwOCC:=true;
                 TPosCarga[SnPosCarga].SwCmndB:=false;
+                TPosCarga[SnPosCarga].swflujovehiculo:=false;
                 if TPosCarga[SnPosCarga].ContOCC=0 then
                   TPosCarga[SnPosCarga].ContOCC:=5
                 else begin
@@ -1199,7 +1222,13 @@ begin
                 end;
                 SwAplicaCmnd:=false;
                 try
-                  SnImporte:=StrToFLoat(ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,3,' '));
+                  SnImporteStr:=ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,3,' ');
+                  decImporteStr:=ExtraeElemStrSep(SnImporteStr,2,'.');
+                  if Length(decImporteStr)=5 then begin
+                    TPosCarga[SnPosCarga].swflujovehiculo:=true;
+                    TPosCarga[SnPosCarga].flujovehiculo:=StrToFloat(decImporteStr[3]+'.'+copy(decImporteStr,4,2));
+                    SnImporte:=StrToFloat(copy(SnImporteStr,1,length(SnImporteStr)-3));
+                  end;
                   rsp:=ValidaCifra(SnImporte,4,2);
                   if (SnImporte<0.01) then
                     SnImporte:=9999;
@@ -1216,6 +1245,22 @@ begin
                   else begin
                     xcomb:=StrToIntDef(ss,0);
                     xp:=PosicionDeCombustible(xpos,xcomb);
+                  end;
+                  if (TPosCarga[SnPosCarga].swflujovehiculo) and (Licencia3Ok) then begin
+                    for xcmb:=1 to TPosCarga[xpos].NoComb do begin
+                      xp:=TPosCarga[xpos].TPos[xcmb];
+                      ss:='Z'+IntToClaveNum(xpos,2);
+                      ss:=ss+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4);
+                      xadic:=TPosCarga[xpos].flujovehiculo;
+                      if xadic>9.5 then
+                        xadic:=9.99;
+                      if xadic>0 then
+                        sval:='+'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)))
+                      else
+                        sval:='-'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)));
+                      ss:=ss+sval;
+                      ComandoConsolaBuff(ss,true);
+                    end;
                   end;
                   if xp>0 then begin
 //                    TPosCarga[SnPosCarga].tipopago:=StrToIntDef(ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,5,' '),0);
@@ -1266,6 +1311,7 @@ begin
                 if (TPosCarga[SnPosCarga].estatus in [1,3])and(not TPosCarga[SnPosCarga].SwOCC)and(not swerr) then begin
                   TPosCarga[SnPosCarga].SwOCC:=true;
                   TPosCarga[SnPosCarga].SwCmndB:=false;
+                  TPosCarga[SnPosCarga].swflujovehiculo:=false;
                   if TPosCarga[SnPosCarga].ContOCC=0 then
                     TPosCarga[SnPosCarga].ContOCC:=5
                   else begin
@@ -1274,8 +1320,14 @@ begin
                   end;
                   SwAplicaCmnd:=false;
                   try
-                    SnLitros:=StrToFLoat(ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,3,' '));
+                    SnLitrosStr:=ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,3,' ');
                     SnImporte:=0;
+                    decImporteStr:=ExtraeElemStrSep(SnLitrosStr,2,'.');
+                    if Length(decImporteStr)=5 then begin
+                      TPosCarga[SnPosCarga].swflujovehiculo:=true;
+                      TPosCarga[SnPosCarga].flujovehiculo:=StrToFloat(decImporteStr[3]+'.'+copy(decImporteStr,4,2));
+                      SnLitros:=StrToFloat(copy(SnLitrosStr,1,length(SnImporteStr)-3));
+                    end;
                     rsp:=ValidaCifra(SnLitros,4,0);
                     if rsp='OK' then
                       if (SnLitros<1) then
@@ -1293,6 +1345,22 @@ begin
                     else begin
                       xcomb:=StrToIntDef(ss,0);
                       xp:=PosicionDeCombustible(xpos,xcomb);
+                    end;
+                    if (TPosCarga[SnPosCarga].swflujovehiculo) and (Licencia3Ok) then begin
+                      for xcmb:=1 to TPosCarga[xpos].NoComb do begin
+                        xp:=TPosCarga[xpos].TPos[xcmb];
+                        ss:='Z'+IntToClaveNum(xpos,2);
+                        ss:=ss+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4);
+                        xadic:=TPosCarga[xpos].flujovehiculo;
+                        if xadic>9.5 then
+                          xadic:=9.99;
+                        if xadic>0 then
+                          sval:='+'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)))
+                        else
+                          sval:='-'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)));
+                        ss:=ss+sval;
+                        ComandoConsolaBuff(ss,true);
+                      end;
                     end;
                     if xp>0 then begin
 //                      TPosCarga[SnPosCarga].tipopago:=StrToIntDef(ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,5,' '),0);
