@@ -40,10 +40,13 @@ type
     MaxPosCarga:integer;
     MaxPosCargaActiva:integer;
     SegundosFinv:Integer;
+    BennettProtec:string;
+    CantProtec:Integer;
     swflujostd,swflumin:Boolean;
     TAdic31   :array[1..32] of real;
     TAdic32   :array[1..32] of real;
     TAdic33   :array[1..32] of real;
+    TabProtec :array[1..10] of integer;
   public
     ListaLog:TStringList;
     ListaLogPetRes:TStringList;
@@ -244,6 +247,7 @@ procedure Togcvdispensarios_bennett.ServiceExecute(Sender: TService);
 var
   config:TIniFile;
   lic:string;
+  i:Integer;
 begin
   try
     config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
@@ -260,6 +264,13 @@ begin
     ListaLog:=TStringList.Create;
     ListaLogPetRes:=TStringList.Create;
     ListaComandos:=TStringList.Create;
+
+    BennettProtec:=config.ReadString('CONF','BennettProtec','');
+    CantProtec:=NoElemStrSep(BennettProtec,';');
+    if CantProtec>10 then
+      CantProtec:=10;
+    for i:=1 to CantProtec do
+      TabProtec[i]:=strtointdef(ExtraeElemStrSep(BennettProtec,i,';'),0);
 
     //LicenciaAdic
     razonSocial:=config.ReadString('CONF','RazonSocial','');
@@ -308,14 +319,14 @@ procedure Togcvdispensarios_bennett.ServerSocket1ClientRead(Sender: TObject;
     chks_valido:Boolean;
     metodoEnum:TMetodos;
 begin
-  try
-    mensaje:=Socket.ReceiveText;
-    if StrToIntDef(mensaje,-99) in [0,1] then begin
-      pSerial.Open:=mensaje='1';
-      Socket.SendText('1');
-      Exit;
-    end;
-    if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))='DISPENSERSX' then begin
+  mensaje:=Socket.ReceiveText;
+  if StrToIntDef(mensaje,-99) in [0,1] then begin
+    pSerial.Open:=mensaje='1';
+    Socket.SendText('1');
+    Exit;
+  end;
+  if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))='DISPENSERSX' then begin
+    try
       AgregaLogPetRes('R '+mensaje);
 
       metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
@@ -323,11 +334,6 @@ begin
       if NoElemStrSep(mensaje,'|')>=2 then begin
 
         comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
-
-        if not chks_valido then begin
-          Responder(Socket,'DISPENSERS|'+comando+'|False|Checksum invalido|');
-          Exit;
-        end;
 
         if NoElemStrSep(mensaje,'|')>2 then begin
           for i:=3 to NoElemStrSep(mensaje,'|') do
@@ -346,14 +352,24 @@ begin
             Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro)+'|');
           FLUMIN_e:
             Socket.SendText('DISPENSERSX|FLUMIN|'+FluMin(parametro)+'|');
+          RESPCMND_e:
+            Socket.SendText('DISPENSERS|RESPCMND|'+RespuestaComando(parametro));
         else
           Socket.SendText('DISPENSERSX|'+comando+'|False|Comando desconocido|');
         end;
       end
       else
         Socket.SendText('DISPENSERSX|'+mensaje+'|False|Comando desconocido|');
-    end
-    else begin
+    except
+      on e:Exception do begin
+        AgregaLogPetRes('Error ServerSocket1ClientRead: '+e.Message);
+        GuardarLogPetRes;
+        Socket.SendText('DISPENSERSX|'+comando+'|False|'+e.Message+'|');
+      end;
+    end;
+  end
+  else begin
+    try
       mensaje:=Key.Decrypt(ExtractFilePath(ParamStr(0)),key3DES,mensaje);
       AgregaLogPetRes('R '+mensaje);
       for i:=1 to Length(mensaje) do begin
@@ -460,15 +476,15 @@ begin
       end
       else
         Responder(Socket,'DISPENSERS|'+mensaje+'|False|Comando desconocido|');
-    end;
-  except
-    on e:Exception do begin
-      if (claveCre<>'') and (key3DES<>'') then
-        AgregaLogPetRes('Error: '+e.Message+'//Clave CRE: '+claveCre+'//Terminacion de Key 3DES: '+copy(key3DES,Length(key3DES)-3,4))
-      else
-        AgregaLogPetRes('Error: '+e.Message);
-      GuardarLogPetRes;
-      Responder(Socket,'DISPENSERS|'+comando+'|False|'+e.Message+'|');
+    except
+      on e:Exception do begin
+        if (claveCre<>'') and (key3DES<>'') then
+          AgregaLogPetRes('Error ServerSocket1ClientRead: '+e.Message+'//Clave CRE: '+claveCre+'//Terminacion de Key 3DES: '+copy(key3DES,Length(key3DES)-3,4))
+        else
+          AgregaLogPetRes('Error ServerSocket1ClientRead: '+e.Message);
+        GuardarLogPetRes;
+        Responder(Socket,'DISPENSERS|'+comando+'|False|'+e.Message+'|');
+      end;
     end;
   end;
 end;
@@ -669,6 +685,7 @@ begin
       PresetComb:=0;
       SwPresetHora:=false;
       SwAdic:=false;
+      swflujovehiculo:=False;
     end;
 
     for i:=0 to posiciones.Count-1 do begin
@@ -1361,6 +1378,13 @@ begin
                         ss:=ss+sval;
                         ComandoConsolaBuff(ss,true);
                       end;
+                    end
+                    // Protecciones
+                    else begin
+                      for i:=1 to CantProtec do
+                        if SnLitros=TabProtec[i] then begin
+                          TPosCarga[SnPosCarga].swflujovehiculo:=true;
+                        end;
                     end;
                     if xp>0 then begin
 //                      TPosCarga[SnPosCarga].tipopago:=StrToIntDef(ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,5,' '),0);
@@ -1478,9 +1502,9 @@ begin
                   ss:='Z'+IntToClaveNum(xpos,2);
                   ss:=ss+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4);
                   case xp of
-                    1:xadic:=10*TAdic31[xpos]+TPosCarga[xpos].Tadic[xp]/100;
-                    2:xadic:=10*TAdic32[xpos]+TPosCarga[xpos].Tadic[xp]/100;
-                    else xadic:=10*TAdic33[xpos]+TPosCarga[xpos].Tadic[xp]/100;
+                    1:xadic:=10*TAdic31[xpos]/100;
+                    2:xadic:=10*TAdic32[xpos]/100;
+                    else xadic:=10*TAdic33[xpos]/100;
                   end;
                   if xadic>9.5 then
                     xadic:=9.99;
@@ -1498,7 +1522,7 @@ begin
             end;
           end
           else begin // if licencia2ok
-            rsp:='Opción no Habilitada';
+            rsp:='Opciï¿½n no Habilitada';
           end;
         end
         // CMND: ACTIVA FLUJO MINIMO
@@ -1514,7 +1538,21 @@ begin
             end;
           end
           else begin // if licencia2ok
-            rsp:='Opción no Habilitada';
+            rsp:='Opciï¿½n no Habilitada';
+          end;
+        end
+          // CMND: CAMBIA PROTECCIONES
+        else if ss='PROT' then begin
+          rsp:='OK';
+          for j:=1 to 10 do
+            TabProtec[j]:=0;
+          BennettProtec:=ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,2,' ');
+          if BennettProtec<>'' then begin
+            CantProtec:=NoElemStrSep(BennettProtec,';');
+            if CantProtec>10 then
+              CantProtec:=10;
+            for j:=1 to CantProtec do
+              TabProtec[j]:=strtointdef(ExtraeElemStrSep(BennettProtec,j,';'),0);
           end;
         end
         else rsp:='Comando no Soportado o no Existe';
@@ -2336,6 +2374,7 @@ begin
       TAdic31[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,1,','),0);
       TAdic32[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,2,','),0);
       TAdic33[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,3,','),0);
+      AgregaLog('Flu1: '+FloatToStr(TAdic31[xpos])+','+'Flu2: '+FloatToStr(TAdic32[xpos])+','+'Flu3: '+FloatToStr(TAdic33[xpos]));
     end;
     Result:=IntToStr(EjecutaComando('FLUSTD'));
   except

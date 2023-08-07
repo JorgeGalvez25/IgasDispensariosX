@@ -90,7 +90,7 @@ MaxStackSize=1048576
 ImageBase=4194304
 ExeDescription=
 [Directories]
-OutputDir=C:\Users\jorge\Dropbox\Proyectos\IgasDispensarios
+OutputDir=C:\Users\jorge\Dropbox\Proyectos\IgasDispensariosX
 UnitOutputDir=C:\delphi\dcu
 PackageDLLOutputDir=
 PackageDCPOutputDir=
@@ -146,10 +146,11 @@ Item1=D:\Delphi_Util7\FibPlus 6.2\source
 Count=1
 Item0=C:\delphi\dcu
 [HistoryLists\hlOutputDirectorry]
-Count=3
-Item0=C:\Users\jorge\Dropbox\Proyectos\IgasDispensarios
-Item1=\IgasDispensarios
-Item2=C:\Users\jorge\Desktop\IgasDispensarios
+Count=4
+Item0=C:\Users\jorge\Dropbox\Proyectos\IgasDispensariosX
+Item1=C:\Users\jorge\Dropbox\Proyectos\IgasDispensarios
+Item2=\IgasDispensarios
+Item3=C:\Users\jorge\Desktop\IgasDispensarios
 [Exception Log]
 EurekaLog Version=6015
 Activate=0
