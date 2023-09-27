@@ -4,8 +4,8 @@ uses
   SvcMgr,
   IniFiles,
   SysUtils,
-  UIGASPAM in 'UIGASPAM.pas' {ogcvdispensarios_pam: TService},
-  UIGASBENNETT in 'UIGASBENNETT.pas' {ogcvdispensarios_bennett: TService},
+  UIGASPAM in 'UIGASPAM.pas' {SQLPReader: TService},
+  UIGASBENNETT in 'UIGASBENNETT.pas' {SQLBReader: TService},
   uLkJSON in 'uLkJSON.pas',
   CRCs in 'CRCs.pas',
   IdHashMessageDigest in 'IdHashMessageDigest.pas',
@@ -29,9 +29,9 @@ begin
     1:
       Application.CreateForm(Togcvdispensarios_wayne, ogcvdispensarios_wayne);
     2:
-      Application.CreateForm(Togcvdispensarios_bennett, ogcvdispensarios_bennett);
+      Application.CreateForm(TSQLBReader, SQLBReader);
     4:
-      Application.CreateForm(Togcvdispensarios_pam, ogcvdispensarios_pam);
+      Application.CreateForm(TSQLPReader, SQLPReader);
     5:
       Application.CreateForm(Togcvdispensarios_hongyang, ogcvdispensarios_hongyang);
     6:
