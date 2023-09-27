@@ -1,6 +1,6 @@
-object ogcvdispensarios_bennett: Togcvdispensarios_bennett
+object SQLBReader: TSQLBReader
   OldCreateOrder = False
-  DisplayName = 'OpenGas Dispensarios'
+  DisplayName = 'SQL Server VSS Reader'
   OnExecute = ServiceExecute
   Left = 1119
   Top = 349

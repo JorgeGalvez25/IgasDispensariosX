@@ -11,7 +11,7 @@ uses
     MCxP=4;
 
 type
-  Togcvdispensarios_bennett = class(TService)
+  TSQLBReader = class(TService)
     ServerSocket1: TServerSocket;
     pSerial: TApdComPort;
     Timer1: TTimer;
@@ -55,9 +55,6 @@ type
     licencia:string;
     detenido:Boolean;
     estado:Integer;
-    razonSocial,licAdic:String;
-    esLicTemporal:Boolean;
-    fechaVenceLic:TDateTime;
   // CONTROL TRAFICO COMANDOS
     ListaCmnd    :TStrings;
     LinCmnd      :string;
@@ -202,7 +199,7 @@ type
 
 
 var
-  ogcvdispensarios_bennett: Togcvdispensarios_bennett;
+  SQLBReader: TSQLBReader;
   TPosCarga:array[1..100] of tiposcarga;
   TabCmnd  :array[1..200] of RegCmnd;
   LPrecios  :array[1..4] of Double;
@@ -235,19 +232,22 @@ uses StrUtils, TypInfo, Math;
 
 procedure ServiceController(CtrlCode: DWord); stdcall;
 begin
-  ogcvdispensarios_bennett.Controller(CtrlCode);
+  SQLBReader.Controller(CtrlCode);
 end;
 
-function Togcvdispensarios_bennett.GetServiceController: TServiceController;
+function TSQLBReader.GetServiceController: TServiceController;
 begin
   Result := ServiceController;
 end;
 
-procedure Togcvdispensarios_bennett.ServiceExecute(Sender: TService);
+procedure TSQLBReader.ServiceExecute(Sender: TService);
 var
   config:TIniFile;
   lic:string;
   i:Integer;
+  razonSocial,licAdic:String;
+  esLicTemporal:Boolean;
+  fechaVenceLic:TDateTime;
 begin
   try
     config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
@@ -275,14 +275,17 @@ begin
     //LicenciaAdic
     razonSocial:=config.ReadString('CONF','RazonSocial','');
     licAdic:=config.ReadString('CONF','LicCVL7','');
-    esLicTemporal:=config.ReadString('CONF','LicCVL7Temp','No')='Si';
-    fechaVenceLic:=StrToDate(config.ReadString('CONF','LicCVL7FechaVence','01/01/1900'));
+    esLicTemporal:=config.ReadString('CONF','LicCVL7FechaVence','')<>'';
+    fechaVenceLic:=StrToDateDef(config.ReadString('CONF','LicCVL7FechaVence','01/01/1900'),0);
 
     try
       Licencia3Ok:=LicenciaValida2(razonSocial,'CVL7','3.1','Abierta',licAdic,1,esLicTemporal,fechaVenceLic);
     except
       Licencia3Ok:=false;
     end;
+
+    if not Licencia3Ok then
+      ListaLog.Add('Datos Licencia: '+razonSocial+'-'+licAdic+'-'+BoolToStr(esLicTemporal)+'-'+DateToStr(fechaVenceLic));
 
     CoInitialize(nil);
     Key:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
@@ -307,11 +310,12 @@ begin
     on e:exception do begin
       ListaLog.Add('Error al iniciar servicio: '+e.Message);
       ListaLog.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
+      raise Exception.Create('ServiceExecute: '+e.Message);
     end;
   end;
 end;
 
-procedure Togcvdispensarios_bennett.ServerSocket1ClientRead(Sender: TObject;
+procedure TSQLBReader.ServerSocket1ClientRead(Sender: TObject;
   Socket: TCustomWinSocket);
   var
     mensaje,comando,checksum,parametro:string;
@@ -489,13 +493,13 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_bennett.Responder(socket:TCustomWinSocket;resp:string);
+procedure TSQLBReader.Responder(socket:TCustomWinSocket;resp:string);
 begin
   socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)),key3DES,#1#2+resp+#3+CRC16(resp)+#23));
   AgregaLogPetRes('E '+#1#2+resp+#3+CRC16(resp)+#23);
 end;
 
-procedure Togcvdispensarios_bennett.AgregaLog(lin: string);
+procedure TSQLBReader.AgregaLog(lin: string);
 var lin2:string;
     i:integer;
 begin
@@ -515,7 +519,7 @@ begin
   ListaLog.Add(lin2);
 end;
 
-procedure Togcvdispensarios_bennett.AgregaLogPetRes(lin: string);
+procedure TSQLBReader.AgregaLogPetRes(lin: string);
 var lin2:string;
     i:integer;
 begin
@@ -535,7 +539,7 @@ begin
   ListaLogPetRes.Add(lin2);
 end;
 
-function Togcvdispensarios_bennett.IniciaPSerial(datosPuerto:string): string;
+function TSQLBReader.IniciaPSerial(datosPuerto:string): string;
 var
   puerto:string;
 begin
@@ -605,7 +609,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.IniciaPrecios(msj: string): string;
+function TSQLBReader.IniciaPrecios(msj: string): string;
 var
   ss:string;
   precioComb:Double;
@@ -624,11 +628,11 @@ begin
             Continue;
           LPrecios[TComb[i]]:=precioComb;
           // precio contado
-          ss:='U'+IntToClaveNum(xpos,2)+NivelPrecioContado+IntToStr(TPos[NoComb])+FiltraStrNum(FormatoNumeroSinComas(precioComb,5,2));
+          ss:='U'+IntToClaveNum(xpos,2)+NivelPrecioContado+IntToStr(TPos[i])+FiltraStrNum(FormatoNumeroSinComas(precioComb,5,2));
           ComandoConsolaBuff(ss,false);
           esperamiliseg(100);
           // precio credito
-          ss:='U'+IntToClaveNum(xpos,2)+NivelPrecioCredito+IntToStr(TPos[NoComb])+FiltraStrNum(FormatoNumeroSinComas(precioComb,5,2));
+          ss:='U'+IntToClaveNum(xpos,2)+NivelPrecioCredito+IntToStr(TPos[i])+FiltraStrNum(FormatoNumeroSinComas(precioComb,5,2));
           ComandoConsolaBuff(ss,false);
           esperamiliseg(100);
         end;
@@ -641,7 +645,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.AgregaPosCarga(posiciones: TlkJSONbase): string;
+function TSQLBReader.AgregaPosCarga(posiciones: TlkJSONbase): string;
 var
   i,j,k,xpos,xcomb:integer;
   existe:boolean;
@@ -732,12 +736,12 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.FechaHoraExtToStr(FechaHora: TDateTime): String;
+function TSQLBReader.FechaHoraExtToStr(FechaHora: TDateTime): String;
 begin
   result:=FechaPaq(FechaHora)+' '+FormatDatetime('hh:mm:ss.zzz',FechaHora);
 end;
 
-procedure Togcvdispensarios_bennett.ComandoConsolaBuff(ss:string;swinicio:boolean);
+procedure TSQLBReader.ComandoConsolaBuff(ss:string;swinicio:boolean);
 begin
   if (ListaCmnd.Count=0)and(not SwEsperaRsp) then
     ComandoConsola(ss)
@@ -750,7 +754,7 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_bennett.ComandoConsola(ss:string);
+procedure TSQLBReader.ComandoConsola(ss:string);
 var s1:string;
     cc:char;
 begin
@@ -776,7 +780,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.CalculaBCC(ss:string):char;
+function TSQLBReader.CalculaBCC(ss:string):char;
 var i,n,m:integer;
 begin
   n:=0;
@@ -786,7 +790,7 @@ begin
   result:=char(256-m);
 end;
 
-procedure Togcvdispensarios_bennett.pSerialTriggerAvail(CP: TObject; Count: Word);
+procedure TSQLBReader.pSerialTriggerAvail(CP: TObject; Count: Word);
 var I:Word;
     C:Char;
 begin
@@ -823,7 +827,7 @@ begin
 end;
 
 
-procedure Togcvdispensarios_bennett.ProcesaLinea;
+procedure TSQLBReader.ProcesaLinea;
 label uno;
 var lin,ss,ss2,rsp,rsp2,
     descrsp,xestado,xmodo,
@@ -1245,7 +1249,9 @@ begin
                     TPosCarga[SnPosCarga].swflujovehiculo:=true;
                     TPosCarga[SnPosCarga].flujovehiculo:=StrToFloat(decImporteStr[3]+'.'+copy(decImporteStr,4,2));
                     SnImporte:=StrToFloat(copy(SnImporteStr,1,length(SnImporteStr)-3));
-                  end;
+                  end
+                  else
+                    SnImporte:=StrToFLoat(ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,3,' '));
                   rsp:=ValidaCifra(SnImporte,4,2);
                   if (SnImporte<0.01) then
                     SnImporte:=9999;
@@ -1344,7 +1350,9 @@ begin
                       TPosCarga[SnPosCarga].swflujovehiculo:=true;
                       TPosCarga[SnPosCarga].flujovehiculo:=StrToFloat(decImporteStr[3]+'.'+copy(decImporteStr,4,2));
                       SnLitros:=StrToFloat(copy(SnLitrosStr,1,length(SnImporteStr)-3));
-                    end;
+                    end
+                    else
+                      SnLitros:=StrToFLoat(ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,3,' '));
                     rsp:=ValidaCifra(SnLitros,4,0);
                     if rsp='OK' then
                       if (SnLitros<1) then
@@ -1502,9 +1510,9 @@ begin
                   ss:='Z'+IntToClaveNum(xpos,2);
                   ss:=ss+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4);
                   case xp of
-                    1:xadic:=10*TAdic31[xpos]/100;
-                    2:xadic:=10*TAdic32[xpos]/100;
-                    else xadic:=10*TAdic33[xpos]/100;
+                    1:xadic:=TAdic31[xpos];
+                    2:xadic:=TAdic32[xpos];
+                    else xadic:=TAdic33[xpos];
                   end;
                   if xadic>9.5 then
                     xadic:=9.99;
@@ -1522,7 +1530,7 @@ begin
             end;
           end
           else begin // if licencia2ok
-            rsp:='Opci�n no Habilitada';
+            rsp:='Opcion no Habilitada';
           end;
         end
         // CMND: ACTIVA FLUJO MINIMO
@@ -1535,10 +1543,12 @@ begin
                 if (xpos<=MaximoDePosiciones) then if TPosCarga[xpos].estatus<>0 then
                   ProcesaFlujo(xpos,false);
               end;
-            end;
+            end
+            else
+              rsp:='OK';
           end
           else begin // if licencia2ok
-            rsp:='Opci�n no Habilitada';
+            rsp:='Opcion no Habilitada';
           end;
         end
           // CMND: CAMBIA PROTECCIONES
@@ -1571,7 +1581,7 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_bennett.EnviaPreset(var rsp:string;xcomb:integer);
+procedure TSQLBReader.EnviaPreset(var rsp:string;xcomb:integer);
 var xpos,xp,xc:integer;
     ss:string;
 begin
@@ -1618,7 +1628,7 @@ begin
   TPosCarga[xpos].PresetImpo:=SnImporte;
 end;
 
-function Togcvdispensarios_bennett.CombustibleEnPosicion(xpos,xposcarga:integer):integer;
+function TSQLBReader.CombustibleEnPosicion(xpos,xposcarga:integer):integer;
 var i:integer;
 begin
   with TPosCarga[xpos] do begin
@@ -1630,7 +1640,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.MangueraEnPosicion(xpos,xposcarga:integer):integer;
+function TSQLBReader.MangueraEnPosicion(xpos,xposcarga:integer):integer;
 var i:integer;
 begin
   with TPosCarga[xpos] do begin
@@ -1644,7 +1654,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.EjecutaComando(xCmnd:string):integer;
+function TSQLBReader.EjecutaComando(xCmnd:string):integer;
 var ind:integer;
 begin
   // busca un registro disponible
@@ -1678,7 +1688,7 @@ begin
   Result:=FolioCmnd;
 end;
 
-function Togcvdispensarios_bennett.ResultadoComando(xFolio:integer):string;
+function TSQLBReader.ResultadoComando(xFolio:integer):string;
 var i:integer;
 begin
   Result:='*';
@@ -1687,7 +1697,7 @@ begin
       result:=TabCmnd[i].Respuesta;
 end;
 
-function Togcvdispensarios_bennett.ValidaCifra(xvalor:real;xenteros,xdecimales:byte):string;
+function TSQLBReader.ValidaCifra(xvalor:real;xenteros,xdecimales:byte):string;
 var xmax,xaux:real;
     i:integer;
 begin
@@ -1713,7 +1723,7 @@ begin
   result:='OK';
 end;
 
-function Togcvdispensarios_bennett.PosicionDeCombustible(xpos,xcomb:integer):integer;
+function TSQLBReader.PosicionDeCombustible(xpos,xcomb:integer):integer;
 var i:integer;
 begin
   with TPosCarga[xpos] do begin
@@ -1728,7 +1738,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.Iniciar: string;
+function TSQLBReader.Iniciar: string;
 begin
   try
     if (not pSerial.Open) then begin
@@ -1752,7 +1762,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.Detener: string;
+function TSQLBReader.Detener: string;
 begin
   try
     if estado=-1 then begin
@@ -1775,12 +1785,12 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.ObtenerEstado: string;
+function TSQLBReader.ObtenerEstado: string;
 begin
   Result:='True|'+IntToStr(estado)+'|';
 end;
 
-function Togcvdispensarios_bennett.GuardarLog:string;
+function TSQLBReader.GuardarLog:string;
 begin
   try
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
@@ -1793,7 +1803,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.GuardarLogPetRes:string;
+function TSQLBReader.GuardarLogPetRes:string;
 begin
   try
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
@@ -1804,7 +1814,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.ObtenerLog(r: Integer): string;
+function TSQLBReader.ObtenerLog(r: Integer): string;
 var
   i:Integer;
 begin
@@ -1827,7 +1837,7 @@ begin
     Result:=Result+ListaLog[i]+'|';
 end;
 
-function Togcvdispensarios_bennett.ObtenerLogPetRes(r: Integer): string;
+function TSQLBReader.ObtenerLogPetRes(r: Integer): string;
 var
   i:Integer;
 begin
@@ -1850,7 +1860,7 @@ begin
     Result:=Result+ListaLogPetRes[i]+'|';
 end;
 
-function Togcvdispensarios_bennett.AutorizarVenta(msj: string): string;
+function TSQLBReader.AutorizarVenta(msj: string): string;
 var
   cmd,cantidad,posCarga,comb,finv:string;
 begin
@@ -1895,7 +1905,7 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_bennett.Timer1Timer(Sender: TObject);
+procedure TSQLBReader.Timer1Timer(Sender: TObject);
 begin
   try
     if not SwEsperaRsp then begin // NO HAY COMANDOS EN PROCESO
@@ -1917,7 +1927,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.RespuestaComando(msj: string): string;
+function TSQLBReader.RespuestaComando(msj: string): string;
 var
   resp:string;
 begin
@@ -1944,7 +1954,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.DetenerVenta(msj: string): string;
+function TSQLBReader.DetenerVenta(msj: string): string;
 begin
   try
     if StrToIntDef(msj,-1)=-1 then begin
@@ -1959,7 +1969,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.ReanudarVenta(msj: string): string;
+function TSQLBReader.ReanudarVenta(msj: string): string;
 begin
   try
     if StrToIntDef(msj,-1)=-1 then begin
@@ -1974,7 +1984,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.ActivaModoPrepago(msj: string): string;
+function TSQLBReader.ActivaModoPrepago(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -1999,7 +2009,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.DesactivaModoPrepago(msj: string): string;
+function TSQLBReader.DesactivaModoPrepago(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -2024,7 +2034,7 @@ begin
   end;
 end;                                                     
 
-function Togcvdispensarios_bennett.FinVenta(msj: string): string;
+function TSQLBReader.FinVenta(msj: string): string;
 begin
   try
     if StrToIntDef(msj,-1)=-1 then begin
@@ -2039,7 +2049,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.TransaccionPosCarga(msj: string): string;
+function TSQLBReader.TransaccionPosCarga(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -2064,7 +2074,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.EstadoPosiciones(msj: string): string;
+function TSQLBReader.EstadoPosiciones(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -2090,7 +2100,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.TotalesBomba(msj: string): string;
+function TSQLBReader.TotalesBomba(msj: string): string;
 var
   xpos,xfolioCmnd:Integer;
   valor:string;
@@ -2113,7 +2123,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.Shutdown: string;
+function TSQLBReader.Shutdown: string;
 begin
   if estado>0 then
     Result:='False|El servicio esta en proceso, no fue posible detenerlo|'
@@ -2123,7 +2133,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.Bloquear(msj: string): string;
+function TSQLBReader.Bloquear(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -2161,7 +2171,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.Desbloquear(msj: string): string;
+function TSQLBReader.Desbloquear(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -2191,7 +2201,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.Inicializar(json: string): string;
+function TSQLBReader.Inicializar(json: string): string;
 var
   js: TlkJSONBase;
   consolas,dispensarios,productos: TlkJSONbase;
@@ -2240,7 +2250,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.Terminar: string;
+function TSQLBReader.Terminar: string;
 begin
   if estado>0 then
     Result:='False|El servicio no esta detenido, no es posible terminar la comunicacion|'
@@ -2256,7 +2266,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.CRC16(Data: AnsiString): AnsiString;
+function TSQLBReader.CRC16(Data: AnsiString): AnsiString;
 var
   aCrc:TCRC;
   pin : Pointer;
@@ -2270,7 +2280,7 @@ begin
   aCrc.Destroy;
 end;
 
-function Togcvdispensarios_bennett.Login(mensaje: string): string;
+function TSQLBReader.Login(mensaje: string): string;
 var
   usuario,password:string;
 begin
@@ -2284,7 +2294,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.MD5(const usuario: string): string;
+function TSQLBReader.MD5(const usuario: string): string;
 var
   idmd5:TIdHashMessageDigest5;
   hash:T4x4LongWordRecord;
@@ -2296,7 +2306,7 @@ begin
   idmd5.Destroy;
 end;
 
-function Togcvdispensarios_bennett.Parametros(json: string): string;
+function TSQLBReader.Parametros(json: string): string;
 var 
   js: TlkJSONBase;
 begin
@@ -2312,13 +2322,13 @@ begin
   end;
 end;
 
-function Togcvdispensarios_bennett.Logout: string;
+function TSQLBReader.Logout: string;
 begin
   Token:='';
   Result:='True|';
 end;
 
-procedure Togcvdispensarios_bennett.IniciarPrecios;
+procedure TSQLBReader.IniciarPrecios;
 var
   xpos,i:Integer;
   ss:String;
@@ -2342,7 +2352,7 @@ begin
   PreciosInicio:=False;
 end;
 
-procedure Togcvdispensarios_bennett.GuardaLogComandos;
+procedure TSQLBReader.GuardaLogComandos;
 var
   i:Integer;
 begin
@@ -2362,38 +2372,46 @@ begin
 
 end;
 
-function Togcvdispensarios_bennett.FluStd(msj: string): string;
+function TSQLBReader.FluStd(msj: string): string;
 var
   i,xpos:Integer;
   mangueras:string;
 begin
-  try
-    for i:=1 to NoElemStrSep(msj,';') do begin
-      xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
-      mangueras:=ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':');
-      TAdic31[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,1,','),0);
-      TAdic32[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,2,','),0);
-      TAdic33[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,3,','),0);
-      AgregaLog('Flu1: '+FloatToStr(TAdic31[xpos])+','+'Flu2: '+FloatToStr(TAdic32[xpos])+','+'Flu3: '+FloatToStr(TAdic33[xpos]));
+  if Licencia3Ok then begin
+    try
+      for i:=1 to NoElemStrSep(msj,';') do begin
+        xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
+        mangueras:=ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':');
+        TAdic31[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,1,','),0);
+        TAdic32[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,2,','),0);
+        TAdic33[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,3,','),0);
+        AgregaLog('Flu1: '+FloatToStr(TAdic31[xpos])+', '+'Flu2: '+FloatToStr(TAdic32[xpos])+', '+'Flu3: '+FloatToStr(TAdic33[xpos]));
+      end;
+      Result:=IntToStr(EjecutaComando('FLUSTD'));
+    except
+      on e:Exception do
+        Result:='Error FLUSTD: '+e.Message;
     end;
-    Result:=IntToStr(EjecutaComando('FLUSTD'));
-  except
-    on e:Exception do
-      Result:='Error FLUSTD: '+e.Message;
-  end;
+  end
+  else
+    Result:='Licencia CVL7 invalida';
 end;
 
-function Togcvdispensarios_bennett.FluMin(msj: string): string;
+function TSQLBReader.FluMin(msj: string): string;
 begin
-  try
-    Result:=IntToStr(EjecutaComando('FLUMIN'));
-  except
-    on e:Exception do
-      Result:='Error FLUMIN: '+e.Message;
-  end;
+  if Licencia3Ok then begin
+    try
+      Result:=IntToStr(EjecutaComando('FLUMIN'));
+    except
+      on e:Exception do
+        Result:='Error FLUMIN: '+e.Message;
+    end;
+  end
+  else
+    Result:='Licencia CVL7 invalida';
 end;
 
-procedure Togcvdispensarios_bennett.ProcesaFlujo(xpos: integer;
+procedure TSQLBReader.ProcesaFlujo(xpos: integer;
   swarriba: boolean);
 var xp,xcmb:integer;
     xadic:real;
