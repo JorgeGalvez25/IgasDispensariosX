@@ -32,6 +32,7 @@
 *.bpl
 *.bpi
 *.dcp
+*.ddp
 *.so
 *.apk
 *.drc
