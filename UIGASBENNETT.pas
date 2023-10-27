@@ -41,6 +41,7 @@ type
     MaxPosCargaActiva:integer;
     SegundosFinv:Integer;
     BennettProtec:string;
+    Canales:String;
     CantProtec:Integer;
     swflujostd,swflumin:Boolean;
     TAdic31   :array[1..32] of real;
@@ -132,7 +133,7 @@ type
        TotalLitros  :array[1..MCxP] of real;
        TMang    :array[1..MCxP] of integer;
        TAjuPos   :array[1..MCxP] of integer;
-       TAdic     :array[1..MCxP] of integer;
+       TAdic     :array[1..MCxP] of real;
        TCmndZ    :array[1..MCxP] of string[14];
        SwDesp,SwA,SwPrec   :boolean;
        SwAdic       :boolean;
@@ -265,6 +266,7 @@ begin
     ListaLogPetRes:=TStringList.Create;
     ListaComandos:=TStringList.Create;
 
+    Canales:=config.ReadString('CONF','Canales','');
     BennettProtec:=config.ReadString('CONF','BennettProtec','');
     CantProtec:=NoElemStrSep(BennettProtec,';');
     if CantProtec>10 then
@@ -333,8 +335,6 @@ begin
     try
       AgregaLogPetRes('R '+mensaje);
 
-      metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
-
       if NoElemStrSep(mensaje,'|')>=2 then begin
 
         comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
@@ -353,11 +353,11 @@ begin
           EJECCMND_e:
             Socket.SendText('DISPENSERSX|EJECCMND|True|'+IntToStr(EjecutaComando(parametro))+'|');
           FLUSTD_e:
-            Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro)+'|');
+            Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro));
           FLUMIN_e:
-            Socket.SendText('DISPENSERSX|FLUMIN|'+FluMin(parametro)+'|');
+            Socket.SendText('DISPENSERSX|FLUMIN|'+FluMin(parametro));
           RESPCMND_e:
-            Socket.SendText('DISPENSERS|RESPCMND|'+RespuestaComando(parametro));
+            Socket.SendText('DISPENSERSX|RESPCMND|'+RespuestaComando(parametro));
         else
           Socket.SendText('DISPENSERSX|'+comando+'|False|Comando desconocido|');
         end;
@@ -650,6 +650,7 @@ var
   i,j,k,xpos,xcomb:integer;
   existe:boolean;
   mangueras:TlkJSONbase;
+  posCanales:String;
 begin
   try
     if not detenido then begin
@@ -720,12 +721,8 @@ begin
               TMang[NoComb]:=mangueras.Child[j].Field['HoseId'].Value;
               TPos[NoComb]:=mangueras.Child[j].Field['HoseId'].Value;
             end;
-            case TPos[NoComb] of
-              1:TAjuPos[TPos[NoComb]]:=10;
-              2:TAjuPos[TPos[NoComb]]:=13;
-              else
-              TAjuPos[TPos[NoComb]]:=12;
-            end;
+            posCanales:=ExtraeElemStrSep(Canales,xpos,';');
+            TAjuPos[TPos[NoComb]]:=StrToIntDef(ExtraeElemStrSep(posCanales,TPos[NoComb],','),0);
           end;
         end;
       end;
@@ -1510,9 +1507,9 @@ begin
                   ss:='Z'+IntToClaveNum(xpos,2);
                   ss:=ss+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4);
                   case xp of
-                    1:xadic:=TAdic31[xpos];
-                    2:xadic:=TAdic32[xpos];
-                    else xadic:=TAdic33[xpos];
+                    1:xadic:=TAdic31[xpos]+TPosCarga[xpos].Tadic[xp];
+                    2:xadic:=TAdic32[xpos]+TPosCarga[xpos].Tadic[xp];
+                    else xadic:=TAdic33[xpos]+TPosCarga[xpos].Tadic[xp];
                   end;
                   if xadic>9.5 then
                     xadic:=9.99;
@@ -1944,7 +1941,7 @@ begin
         resp:=copy(resp,3,Length(resp)-2)+'|'
       else
         resp:='';
-      Result:='True|'+resp;
+      Result:='True|'+resp+'|';
     end
     else
       Result:='False|'+resp+'|';
@@ -2374,41 +2371,56 @@ end;
 
 function TSQLBReader.FluStd(msj: string): string;
 var
-  i,xpos:Integer;
-  mangueras:string;
+  i,j,xpos:Integer;
+  mangueras,mang:string;
+  Flu   :array[1..3] of real;
 begin
   if Licencia3Ok then begin
     try
       for i:=1 to NoElemStrSep(msj,';') do begin
         xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
         mangueras:=ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':');
-        TAdic31[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,1,','),0);
-        TAdic32[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,2,','),0);
-        TAdic33[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,3,','),0);
-        AgregaLog('Flu1: '+FloatToStr(TAdic31[xpos])+', '+'Flu2: '+FloatToStr(TAdic32[xpos])+', '+'Flu3: '+FloatToStr(TAdic33[xpos]));
+        with TPosCarga[xpos] do begin
+          for j:=1 to NoElemStrSep(mangueras,',') do begin
+            mang:=ExtraeElemStrSep(mangueras,j,',');
+            if NoElemStrSep(mang,'-')>1 then begin
+              Flu[j]:=StrToFloatDef(ExtraeElemStrSep(mang,1,'-'),0);
+              Tadic[j]:=StrToFloatDef(ExtraeElemStrSep(mang,2,'-'),0)*-1;
+            end
+            else begin
+              Flu[j]:=StrToFloatDef(ExtraeElemStrSep(mang,1,'+'),0);
+              Tadic[j]:=StrToFloatDef(ExtraeElemStrSep(mang,2,'+'),0);
+            end;
+          end;                                    
+          TAdic31[xpos]:=Flu[1];
+          TAdic32[xpos]:=Flu[2];
+          TAdic33[xpos]:=Flu[3];
+          AgregaLog('Flu1: '+FloatToStr(TAdic31[xpos])+', '+'Flu2: '+FloatToStr(TAdic32[xpos])+', '+'Flu3: '+FloatToStr(TAdic33[xpos]));
+          AgregaLog('Cali1: '+FloatToStr(Tadic[1])+', '+'Cali2: '+FloatToStr(Tadic[2])+', '+'Cali3: '+FloatToStr(Tadic[3]));
+        end;
       end;
-      Result:=IntToStr(EjecutaComando('FLUSTD'));
+      Result:='True|'+IntToStr(EjecutaComando('FLUSTD'))+'|';
     except
       on e:Exception do
-        Result:='Error FLUSTD: '+e.Message;
+        Result:='False|Error FLUSTD: '+e.Message+'|';
     end;
   end
   else
-    Result:='Licencia CVL7 invalida';
+    Result:='False|Licencia CVL7 invalida|';
 end;
 
 function TSQLBReader.FluMin(msj: string): string;
 begin
   if Licencia3Ok then begin
     try
-      Result:=IntToStr(EjecutaComando('FLUMIN'));
+      Result:='True|'+IntToStr(EjecutaComando('FLUMIN'))+'|';
     except
       on e:Exception do
-        Result:='Error FLUMIN: '+e.Message;
+        Result:='False|Error FLUMIN: '+e.Message+'|';
     end;
   end
   else
-    Result:='Licencia CVL7 invalida';
+    Result:='False|Licencia CVL7 invalida|';
 end;
 
 procedure TSQLBReader.ProcesaFlujo(xpos: integer;
@@ -2424,7 +2436,7 @@ begin
         ComandoConsolaBuff(TPosCarga[xpos].TCmndZ[xp],true);
     end
     else begin // abajo
-      xadic:=TPosCarga[xpos].Tadic[xp]/100;
+      xadic:=TPosCarga[xpos].Tadic[xp];
       if xadic>9.5 then
         xadic:=9.99;
       if xadic>0 then
