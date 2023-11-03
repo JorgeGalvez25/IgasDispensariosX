@@ -911,7 +911,7 @@ begin
                      swprec:=false;
                    if estatusant<>1 then begin
                      if (swflujostd) then begin
-                       ProcesaFlujo(xpos,false);
+                       ProcesaFlujo(xpos,True);
                        esperamiliseg(100);
                      end;
                      if swflujovehiculo then begin
@@ -1540,6 +1540,7 @@ begin
                 if (xpos<=MaximoDePosiciones) then if TPosCarga[xpos].estatus<>0 then
                   ProcesaFlujo(xpos,false);
               end;
+              GuardarLog;
             end
             else
               rsp:='OK';
@@ -2444,9 +2445,12 @@ begin
       else
         sval:='-'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)));
       ss:='Z'+IntToClaveNum(xpos,2)+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4)+sval;
-      ComandoConsolaBuff(ss,false);
-      if swflumin then
-        ComandoConsolaBuff(ss,false);
+      ComandoConsola(ss);
+      Sleep(50);
+      if swflumin then begin
+        ComandoConsola(ss);
+        Sleep(50);
+      end;
     end;
   end;
 end;
