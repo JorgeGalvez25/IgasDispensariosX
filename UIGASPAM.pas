@@ -36,7 +36,7 @@ type
     UltimoStatus:string;
     SnPosCarga:integer;
     SnImporte,SnLitros:real;
-    SwError         :boolean;
+    SwError,SwMapOff  :boolean;
     ContEspera1,
     ContEsperaPaso2,
     ContEsperaPaso3,
@@ -55,6 +55,7 @@ type
     ValorPam3,
     ValorPamf,    
     VersionPam1000,SetUpPAM1000:string;
+    ConfAdic:String;
     TAdic31   :array[1..32] of real;
     TAdic32   :array[1..32] of real;
     TAdic33   :array[1..32] of real;    
@@ -127,7 +128,7 @@ type
     function Logout: string;
     function MD5(const usuario: string): string;
     function FluStd(msj: string):string;
-    function FluMin(msj: string):string;
+    function FluMin:string;
     function FluAct(msj: string):string;    
     procedure GuardaLogComandos;
     { Public declarations }
@@ -281,8 +282,10 @@ begin
     ListaLogPetRes:=TStringList.Create;
 
     ReautorizaPam:='No';
-
     FlujoPorVehiculo:=Mayusculas(config.ReadString('CONF','FlujoPorVehiculo',''))='SI';
+    SwMapOff:=Mayusculas(config.ReadString('CONF','MapOff','SI'))='SI';
+    TipoClb:=config.ReadString('CONF','TipoClb','0');
+    ConfAdic:=config.ReadString('CONF','ConfAdic','');
 
     //LicenciaAdic
     razonSocial:=config.ReadString('CONF','RazonSocial','');
@@ -336,15 +339,17 @@ procedure TSQLPReader.ServerSocket1ClientRead(Sender: TObject;
 begin
   mensaje:=Socket.ReceiveText;
   if StrToIntDef(mensaje,-99) in [0,1] then begin
-    pSerial.Open:=mensaje='1';
-    Socket.SendText('1');
+    if Licencia3Ok then begin
+      pSerial.Open:=mensaje='1';
+      Socket.SendText('1');
+    end
+    else
+      Socket.SendText('False|Licencia CVL7 invalida|');       
     Exit;
   end;
   if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))='DISPENSERSX' then begin
     try
       AgregaLogPetRes('R '+mensaje);
-
-      metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
 
       if NoElemStrSep(mensaje,'|')>=2 then begin
 
@@ -364,11 +369,11 @@ begin
           EJECCMND_e:
             Socket.SendText('DISPENSERSX|EJECCMND|True|'+IntToStr(EjecutaComando(parametro))+'|');
           FLUSTD_e:
-            Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro)+'|');
+            Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro));
           FLUMIN_e:
-            Socket.SendText('DISPENSERSX|FLUMIN|'+FluMin(parametro)+'|');
+            Socket.SendText('DISPENSERSX|FLUMIN|'+FluMin);
           RESPCMND_e:
-            Socket.SendText('DISPENSERS|RESPCMND|'+RespuestaComando(parametro));
+            Socket.SendText('DISPENSERSX|RESPCMND|'+RespuestaComando(parametro));
         else
           Socket.SendText('DISPENSERSX|'+comando+'|False|Comando desconocido|');
         end;
@@ -812,6 +817,7 @@ begin
                        if not swnivelprec then begin
                          xPosT:=xpos;
                          ComandoConsola('T'+inttoclavenum(xpos,2)+'1'); // NIVEL DE PRECIOS: CASH
+                         swnivelprec:=True;
                          exit;
                          SwAPlicaMapa:=false;
                        end;
@@ -947,17 +953,19 @@ begin
 
            if not SwComandoB then begin
              SwComandoB:=true;
-             if VersionPam1000='3' then begin
-               if SetUpPAM1000='' then
-                 ComandoConsola('D06222'); // D05233
-               Esperamiliseg(500);
-               if SetUpPAM1000<>'.' then
+             if not SwMapOff then begin
+               if VersionPam1000='3' then begin
+                 if SetUpPAM1000='' then
+                   ComandoConsola('D06222'); // D05233
+                 Esperamiliseg(500);
+                 if SetUpPAM1000<>'.' then
+                   ComandoConsola('D0'+SetUpPAM1000);
+               end
+               else if SetUpPAM1000<>'' then
                  ComandoConsola('D0'+SetUpPAM1000);
-             end
-             else if SetUpPAM1000<>'' then
-               ComandoConsola('D0'+SetUpPAM1000);
-             EsperaMiliSeg(500);
-             exit;
+               EsperaMiliSeg(500);
+               exit;
+             end;
            end;
            if (swcomandob) then begin
              // MAPEA LOS PRODUCTOS
@@ -1365,8 +1373,6 @@ begin
                       else
                         rsp:=ValidaCifra(SnImporte,3,2);
                     end;
-                    if (SnImporte<0.01) then
-                      SnImporte:=9999;
                   except
                     rsp:='Error en Importe';
                   end;
@@ -1832,13 +1838,18 @@ begin
           for xpos:=1 to MaxPosCarga do
             if (TPosCarga[xpos].FluStd) or (TPosCarga[xpos].FluMin) then
               rsp:='Comandos en proceso';
+          if (rsp='OK') and (SwEspMin) then begin
+            GuardarLog;
+            Detener;
+            Shutdown;
+            Terminar;
+          end;
         end
         else if ss='SIMADI' then begin
           for xpos:=1 to MaxPosCarga do begin
             TPosCarga[xpos].FluStd:=False;
             TPosCarga[xpos].FluMin:=False;
           end;
-          rsp:='OK';
         end;
         // FIN FLU
         TabCmnd[xcmnd].SwNuevo:=false;
@@ -2078,7 +2089,7 @@ begin
       precio:=0;
       tipopago:=0;
       finventa:=0;
-      Swnivelprec:=false;
+      Swnivelprec:=SwMapOff;
       SwCargando:=false;
       SwAutorizada:=false;
       SwAutorizando:=false;
@@ -2129,7 +2140,7 @@ begin
             else
               TPosx[NoComb]:=1;
             TMapa[NoComb]:='X'+IntToClaveNum(xpos,2)+IntToStr(xcomb)+IntToStr(conPosicion);
-            SwMapea[NoComb]:=True;
+            SwMapea[NoComb]:=not SwMapOff;
           end;
         end;
       end;
@@ -2519,6 +2530,10 @@ begin
     estado:=1;
     Timer1.Enabled:=True;
     numPaso:=0;
+
+    if ConfAdic<>'' then
+      FluStd(ConfAdic);
+
     Result:='True|';
   except
     on e:Exception do
@@ -2757,11 +2772,21 @@ begin
         SetUpPAM1000:=ExtraeElemStrSep(variable,2,'=')
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='VERSIONPAM1000' then
         VersionPam1000:=ExtraeElemStrSep(variable,2,'=')
-      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='TIPOCLB' then
-        TipoClb:=ExtraeElemStrSep(variable,2,'=')
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='POSTARJETA2' then
         PosTarjeta2:=StrToInt(ExtraeElemStrSep(variable,2,'='));
     end;
+
+    productos := js.Field['Products'];
+
+    for i:=0 to productos.Count-1 do begin
+      productID:=productos.Child[i].Field['ProductId'].Value;
+      if productos.Child[i].Field['Price'].Value<0 then begin
+        Result:='False|El precio '+IntToStr(productID)+' es incorrecto|';
+        Exit;
+      end;
+      LPrecios[productID]:=productos.Child[i].Field['Price'].Value;    
+    end;
+
     PreciosInicio:=False;
     estado:=0;
     Result:='True|';
@@ -2908,27 +2933,34 @@ begin
 
 end;
 
-function TSQLPReader.FluMin(msj: string): string;
+function TSQLPReader.FluMin: string;
 begin
   if Licencia3Ok then begin
     try
-      Result:=IntToStr(EjecutaComando('FLUMIN'));
+      Result:='True|'+IntToStr(EjecutaComando('FLUMIN'));
     except
       on e:Exception do
-        Result:='Error FLUMIN: '+e.Message;
+        Result:='False|Error FLUMIN: '+e.Message;
     end;
   end
   else
-    Result:='Licencia CVL7 invalida';
+    Result:='False|Licencia CVL7 invalida';
 end;
 
 function TSQLPReader.FluStd(msj: string): string;
 var
   i,xpos:Integer;
   mangueras:string;
+  config:TIniFile;  
 begin
   if Licencia3Ok then begin
     try
+      AgregaLog('TipoClb: '+TipoClb+', Mensaje: '+msj);
+
+      config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
+      config.WriteString('CONF','ConfAdic',msj);
+      config:=nil;
+
       if TipoClb[1] in ['6','7'] then begin
         for i:=1 to NoElemStrSep(msj,';') do begin
           xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
@@ -2943,14 +2975,14 @@ begin
         for i:=1 to NoElemStrSep(msj,';') do
           tagx[i]:=StrToInt(ExtraeElemStrSep(msj,i,';'));
 
-      Result:=IntToStr(EjecutaComando('FLUSTD'));
+      Result:='True|'+IntToStr(EjecutaComando('FLUSTD'))+'|';
     except
       on e:Exception do
-        Result:='Error FLUSTD: '+e.Message;
+        Result:='False|Error FLUSTD: '+e.Message+'|';
     end;
   end
   else
-    Result:='Licencia CVL7 invalida';
+    Result:='False|Licencia CVL7 invalida|';
 end;
 
 function TSQLPReader.FluAct(msj: string): string;
@@ -2968,14 +3000,14 @@ begin
         TAdic33[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,3,','),0);
         AgregaLog('Flu1: '+FloatToStr(TAdic31[xpos])+','+'Flu2: '+FloatToStr(TAdic32[xpos])+','+'Flu3: '+FloatToStr(TAdic33[xpos]));
       end;
-      Result:=IntToStr(EjecutaComando('FLUACT'));
+      Result:='True|'+IntToStr(EjecutaComando('FLUACT'))+'|';
     except
       on e:Exception do
-        Result:='Error FLUACT: '+e.Message;
+        Result:='False|sError FLUACT: '+e.Message+'|';
     end;
   end
   else
-    Result:='Licencia CVL7 invalida';
+    Result:='False|Licencia CVL7 invalida|';
 end;
 
 end.
