@@ -41,7 +41,7 @@ type
     MaxPosCargaActiva:integer;
     SegundosFinv:Integer;
     BennettProtec:string;
-    Canales:String;
+    Canales,ConfAdic:String;
     CantProtec:Integer;
     swflujostd,swflumin:Boolean;
     TAdic31   :array[1..32] of real;
@@ -267,6 +267,7 @@ begin
     ListaComandos:=TStringList.Create;
 
     Canales:=config.ReadString('CONF','Canales','');
+    ConfAdic:=config.ReadString('CONF','ConfAdic','');
     BennettProtec:=config.ReadString('CONF','BennettProtec','');
     CantProtec:=NoElemStrSep(BennettProtec,';');
     if CantProtec>10 then
@@ -722,7 +723,7 @@ begin
               TPos[NoComb]:=mangueras.Child[j].Field['HoseId'].Value;
             end;
             posCanales:=ExtraeElemStrSep(Canales,xpos,';');
-            TAjuPos[TPos[NoComb]]:=StrToIntDef(ExtraeElemStrSep(posCanales,TPos[NoComb],','),0);
+            TAjuPos[TPos[NoComb]]:=StrToIntDef(ExtraeElemStrSep(posCanales,IfThen(TPos[NoComb]=4,3,TPos[NoComb]),','),0);
           end;
         end;
       end;
@@ -1506,6 +1507,7 @@ begin
                   xp:=TPosCarga[xpos].TPos[xcmb];
                   ss:='Z'+IntToClaveNum(xpos,2);
                   ss:=ss+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4);
+                  if xp=4 then xp:=3;
                   case xp of
                     1:xadic:=TAdic31[xpos]+TPosCarga[xpos].Tadic[xp];
                     2:xadic:=TAdic32[xpos]+TPosCarga[xpos].Tadic[xp];
@@ -1752,6 +1754,9 @@ begin
     estado:=1;
     Timer1.Enabled:=True;
     numPaso:=0;
+
+    if ConfAdic<>'' then
+      FluStd(ConfAdic);
 
     Result:='True|';
   except
@@ -2375,6 +2380,7 @@ var
   i,j,xpos:Integer;
   mangueras,mang:string;
   Flu   :array[1..3] of real;
+  config:TIniFile;
 begin
   if Licencia3Ok then begin
     try
@@ -2400,6 +2406,9 @@ begin
           AgregaLog('Cali1: '+FloatToStr(Tadic[1])+', '+'Cali2: '+FloatToStr(Tadic[2])+', '+'Cali3: '+FloatToStr(Tadic[3]));
         end;
       end;
+      config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
+      config.WriteString('CONF','ConfAdic',msj);
+      config:=nil;
       Result:='True|'+IntToStr(EjecutaComando('FLUSTD'))+'|';
     except
       on e:Exception do
@@ -2432,6 +2441,7 @@ var xp,xcmb:integer;
 begin
   for xcmb:=1 to TPosCarga[xpos].NoComb do begin
     xp:=TPosCarga[xpos].TPos[xcmb];
+    if xp=4 then xp:=3;
     if swarriba then begin  // arriba
       if swflujostd then
         ComandoConsolaBuff(TPosCarga[xpos].TCmndZ[xp],true);
@@ -2444,12 +2454,13 @@ begin
         sval:='+'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)))
       else
         sval:='-'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)));
+      if xp=3 then xp:=4;
       ss:='Z'+IntToClaveNum(xpos,2)+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4)+sval;
       ComandoConsola(ss);
-      Sleep(50);
+      Sleep(100);
       if swflumin then begin
         ComandoConsola(ss);
-        Sleep(50);
+        Sleep(100);
       end;
     end;
   end;
