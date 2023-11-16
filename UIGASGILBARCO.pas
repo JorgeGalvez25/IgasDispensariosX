@@ -37,8 +37,10 @@ type
     ContLeeVenta:Integer;
     SwAplicaCmnd,
     SwEspera,
-    SwPasoBien      :boolean;
+    SwPasoBien:boolean;
+    Transmitiendo:Boolean;
     HoraEspera:TDateTime;
+    Buffer:TList;
     function  TransmiteComando(iComando, xNPos: integer; sDataBlock: string) : boolean;
     procedure  TransmiteComandoEsp(sDataBlock: string);
     function  DataControlWordValue(chDataControlWord : char; iLongitud : integer) : longint;
@@ -137,7 +139,9 @@ type
     function EnviaPresetFlu(xpos:integer;xsube:boolean):boolean;
     procedure EstatusDispensarios;
     procedure ProcesaComandos;
-    procedure AvanzaPosCiclo;    
+    procedure AvanzaPosCiclo;
+    procedure DespliegaMemo4(lin:string);
+    procedure EjecutaBuffer;
     { Public declarations }
   end;
 
@@ -197,7 +201,15 @@ type
        SwResp,
        SwNuevo    :boolean;
        Respuesta  :string[80];
-     end;         
+     end;
+
+  type
+    TBuffer = class
+    private
+      comando, parametro: string;
+      Socket: TCustomWinSocket;
+    end;
+
 
 const idSTX = #2;
       idETX = #3;
@@ -316,6 +328,7 @@ begin
     estado:=-1;
     ListaLog:=TStringList.Create;
     ListaLogPetRes:=TStringList.Create;
+    Buffer:=TList.Create;
 
 //    CoInitialize(nil);
 //    Key:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
@@ -351,6 +364,7 @@ procedure Togcvdispensarios_gilbarco2W.ServerSocket1ClientRead(
     i:Integer;
     chks_valido:Boolean;
     metodoEnum:TMetodos;
+    objBuffer:TBuffer;
 begin
   try
     mensaje:={Key.Decrypt(ExtractFilePath(ParamStr(0)),key3DES,}Socket.ReceiveText{)};
@@ -392,6 +406,15 @@ begin
 
         if parametro[Length(parametro)]='|' then
           Delete(parametro,Length(parametro),1);
+      end;
+
+      if Transmitiendo then begin
+        objBuffer.Create;
+        objBuffer.comando:=comando;
+        objBuffer.parametro:=parametro;
+        objBuffer.Socket:=Socket;
+        Buffer.Add(objBuffer);
+        Exit;
       end;
 
       metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
@@ -1163,137 +1186,155 @@ var iMaxIntentos, iNoIntento, i , xpos: integer;
     sw2,
     bOk : boolean;
 begin
-  xpos:=xNPos;
-  sw2:=false;
-  if ( iComando in [$10,$30,$F0] ) then begin
-     bOk:= true;
-     iMaxIntentos:= 0;
-  end
-  else begin
-    bOk:= false;
-    if ( iComando in [$00,$20] ) then begin
-      iMaxIntentos:= 2;
-      iBytesEsperados:= 1;
-      if ( iComando in [$20] ) then begin
-        sw2:=true;
-      end;
-    end
-    else begin
-      iMaxIntentos:= 2;
-      if TPosCarga[xpos].DigitosGilbarco=6 then begin
-        if ( iComando=$40 ) then
-           iBytesEsperados:= 33
-        else if ( iComando=$50 ) then
-           iBytesEsperados:= 184
-        else if ( iComando=$60 ) then
-           iBytesEsperados:= 6;
+  try
+    try
+      Transmitiendo:=True;
+      Timer1.Enabled:=False;
+      xpos:=xNPos;
+      sw2:=false;
+      if ( iComando in [$10,$30,$F0] ) then begin
+         bOk:= true;
+         iMaxIntentos:= 0;
       end
       else begin
-        if ( iComando=$40 ) then
-           iBytesEsperados:= 39
-        else if ( iComando=$50 ) then
-           iBytesEsperados:= 256
-        else if ( iComando=$60 ) then
-           iBytesEsperados:= 8;
-      end;
-    end;
-  end;
-  if ( xNPos=16 ) then xNPos:= 0;
-  chComando:= char(iComando + xNPos);
-  iNoIntento:= 0;
-  repeat
-    inc(iNoIntento);
-    bListo:= false;
-    bEndOfText:= false;
-    bLineFeed:= false;
-    sRespuesta:= '';
-    pSerial.FlushInBuffer;
-    pSerial.FlushOutBuffer;
-    AgregaLog('E '+chComando+' - '+IntToStr(iComando)+'.'+IntToStr(xNPos));
-    pSerial.PutChar(chComando);
-    repeat
-       pSerial.ProcessCommunications;
-    until ( pSerial.OutBuffUsed=0 );
-    if ( not bOk ) then begin
-      if sw2 then
-        newtimer(etTimeOut,MSecs2Ticks(GtwTimeout))
-      else
-        newtimer(etTimeOut,MSecs2Ticks(GtwTimeout));
-      repeat
-         Sleep(5);
-      until ( ( bListo ) or ( timerexpired(etTimeOut) ) );
-      if ( bListo ) then begin
-        ls:=length(sRespuesta);
-        if TPosCarga[xpos].DigitosGilbarco=6 then begin
-          if ( iComando=$00 ) then
-             bOk:= ( ( LoNibbleChar(sRespuesta[1])=xNPos ) and ( HiNibbleChar(sRespuesta[1])<>$0 ) )
-          else if ( iComando=$20 ) then begin
-             bOk:= ( ( LoNibbleChar(sRespuesta[1])=xNPos ) and ( HiNibbleChar(sRespuesta[1])=$D ) );
-          end
-          else if ( iComando=$40 ) then begin
-            bOk:= ( length(sRespuesta)>31 );
-          end
-          else if ( iComando=$50 ) then begin
-            bOk:= ( ( ( length(sRespuesta) - 4) mod 30)=0 );
-          end
-          else if ( iComando=$60 ) then begin
-             bOk:= ( length(sRespuesta)=6 );
-          end
-          else
-             bOk:= false;
+        bOk:= false;
+        if ( iComando in [$00,$20] ) then begin
+          iMaxIntentos:= 2;
+          iBytesEsperados:= 1;
+          if ( iComando in [$20] ) then begin
+            sw2:=true;
+          end;
         end
         else begin
-          if ( iComando=$00 ) then
-             bOk:= ( ( LoNibbleChar(sRespuesta[1])=xNPos ) and ( HiNibbleChar(sRespuesta[1])<>$0 ) )
-          else if ( iComando=$20 ) then begin
-             bOk:= ( ( LoNibbleChar(sRespuesta[1])=xNPos ) and ( HiNibbleChar(sRespuesta[1])=$D ) );
+          iMaxIntentos:= 2;
+          if TPosCarga[xpos].DigitosGilbarco=6 then begin
+            if ( iComando=$40 ) then
+               iBytesEsperados:= 33
+            else if ( iComando=$50 ) then
+               iBytesEsperados:= 184
+            else if ( iComando=$60 ) then
+               iBytesEsperados:= 6;
           end
-          else if ( iComando=$40 ) then begin
-            bOk:= ( length(sRespuesta)>37 );
-          end
-          else if ( iComando=$50 ) then begin
-            bOk:= ( ( ( length(sRespuesta) - 4) mod 42)=0 );
-          end
-          else if ( iComando=$60 ) then begin
-            bOk:= ( length(sRespuesta)=8 );
-          end
-          else
-             bOk:= false;
+          else begin
+            if ( iComando=$40 ) then
+               iBytesEsperados:= 39
+            else if ( iComando=$50 ) then
+               iBytesEsperados:= 256
+            else if ( iComando=$60 ) then
+               iBytesEsperados:= 8;
+          end;
         end;
       end;
-      if ( not bOk ) then begin
-        if  ( iNoIntento<iMaxIntentos ) then sleep(GtwTiempoCmnd);
-      end
-      else if ( iComando=$20 ) then begin
-        sleep(10);
+      if ( xNPos=16 ) then xNPos:= 0;
+      chComando:= char(iComando + xNPos);
+      iNoIntento:= 0;
+      repeat
+        inc(iNoIntento);
         bListo:= false;
         bEndOfText:= false;
         bLineFeed:= false;
         sRespuesta:= '';
         pSerial.FlushInBuffer;
         pSerial.FlushOutBuffer;
-        for i:= 1 to length ( sDataBlock ) do begin
-           pSerial.PutChar(sDataBlock[i]);
-           repeat
-              pSerial.ProcessCommunications;
-           until ( pSerial.OutBuffUsed=0 );
-        end;
-        sleep(GtwTiempoCmnd);
-        chComando:= char($00 + xNPos);
-        AgregaLog('E '+chComando+' - '+IntToStr($00)+'.'+IntToStr(xNPos));
+        AgregaLog('E '+chComando+' - '+IntToHex(iComando,1)+'.'+IntToStr(xNPos));
         pSerial.PutChar(chComando);
         repeat
            pSerial.ProcessCommunications;
         until ( pSerial.OutBuffUsed=0 );
-        newtimer(etTimeOut,MSecs2Ticks(GtwTimeout));
-        repeat
-           Sleep(5);
-        until ( ( bListo ) or ( timerexpired(etTimeOut) ) );        // FALLA
-        bOk:= ( LoNibbleChar(sRespuesta[1])=xNPos );
+        if ( not bOk ) then begin
+          if sw2 then
+            newtimer(etTimeOut,MSecs2Ticks(GtwTimeout))
+          else
+            newtimer(etTimeOut,MSecs2Ticks(GtwTimeout));
+          repeat
+             Sleep(5);
+          until ( ( bListo ) or ( timerexpired(etTimeOut) ) );
+          if ( bListo ) then begin
+            ls:=length(sRespuesta);
+            if TPosCarga[xpos].DigitosGilbarco=6 then begin
+              if ( iComando=$00 ) then
+                 bOk:= ( ( LoNibbleChar(sRespuesta[1])=xNPos ) and ( HiNibbleChar(sRespuesta[1])<>$0 ) )
+              else if ( iComando=$20 ) then begin
+                 bOk:= ( ( LoNibbleChar(sRespuesta[1])=xNPos ) and ( HiNibbleChar(sRespuesta[1])=$D ) );
+              end
+              else if ( iComando=$40 ) then begin
+                bOk:= ( length(sRespuesta)>31 );
+              end
+              else if ( iComando=$50 ) then begin
+                bOk:= ( ( ( length(sRespuesta) - 4) mod 30)=0 );
+              end
+              else if ( iComando=$60 ) then begin
+                 bOk:= ( length(sRespuesta)=6 );
+              end
+              else
+                 bOk:= false;
+            end
+            else begin
+              if ( iComando=$00 ) then
+                 bOk:= ( ( LoNibbleChar(sRespuesta[1])=xNPos ) and ( HiNibbleChar(sRespuesta[1])<>$0 ) )
+              else if ( iComando=$20 ) then begin
+                 bOk:= ( ( LoNibbleChar(sRespuesta[1])=xNPos ) and ( HiNibbleChar(sRespuesta[1])=$D ) );
+              end
+              else if ( iComando=$40 ) then begin
+                bOk:= ( length(sRespuesta)>37 );
+              end
+              else if ( iComando=$50 ) then begin
+                bOk:= ( ( ( length(sRespuesta) - 4) mod 42)=0 );
+              end
+              else if ( iComando=$60 ) then begin
+                bOk:= ( length(sRespuesta)=8 );
+              end
+              else
+                 bOk:= false;
+            end;
+          end;
+          if ( not bOk ) then begin
+            if  ( iNoIntento<iMaxIntentos ) then sleep(GtwTiempoCmnd);
+          end
+          else if ( iComando=$20 ) then begin
+            sleep(10);
+            bListo:= false;
+            bEndOfText:= false;
+            bLineFeed:= false;
+            sRespuesta:= '';
+            pSerial.FlushInBuffer;
+            pSerial.FlushOutBuffer;
+            for i:= 1 to length ( sDataBlock ) do begin
+               pSerial.PutChar(sDataBlock[i]);
+               repeat
+                  pSerial.ProcessCommunications;
+               until ( pSerial.OutBuffUsed=0 );
+            end;
+            sleep(GtwTiempoCmnd);
+            chComando:= char($00 + xNPos);
+            AgregaLog('E '+chComando+' - '+IntToHex($00,1)+'.'+IntToStr(xNPos));
+            pSerial.PutChar(chComando);
+            repeat
+               pSerial.ProcessCommunications;
+            until ( pSerial.OutBuffUsed=0 );
+            newtimer(etTimeOut,MSecs2Ticks(GtwTimeout));
+            repeat
+               Sleep(5);
+            until ( ( bListo ) or ( timerexpired(etTimeOut) ) );        // FALLA
+            AgregaLog('sRespuesta Length: '+IntToStr(length(sRespuesta)));
+            if length(sRespuesta)>0 then
+              bOk:= ( LoNibbleChar(sRespuesta[1])=xNPos )
+            else
+              bOk:=False;
+          end;
+        end;
+      until ( ( bOk ) or ( iNoIntento>=iMaxIntentos ) );
+      result:= bOk;
+    except
+      on e:Exception do begin
+        AgregaLog('Error TransmiteComando: '+e.Message);
+        raise Exception.Create('Error TransmiteComando');
       end;
     end;
-  until ( ( bOk ) or ( iNoIntento>=iMaxIntentos ) );
-  result:= bOk;
+  finally
+    Transmitiendo:=False;
+    Timer1.Enabled:=True;
+  end;
 end;
 
 function Togcvdispensarios_gilbarco2W.DataControlWordValue(
@@ -1590,8 +1631,10 @@ begin
             inc(NoComb);
             TComb[NoComb]:=xcomb;
             TMang[NoComb]:=mangueras.Child[j].Field['HoseId'].Value;
-            if TMang[NoComb]>0 then
-              TPosx[NoComb]:=TMang[NoComb]
+            if TMang[NoComb]>0 then begin
+              TPosx[NoComb]:=TMang[NoComb];
+              DespliegaMemo4('>>NoComb '+inttostr(NoComb)+'    Comb '+inttostr(xcomb)+'    xPos '+inttostr(TPosx[NoComb]));
+            end
             else if NoComb<=2 then
               TPosx[NoComb]:=NoComb
             else
@@ -1989,7 +2032,7 @@ begin
               end;
             end
             else  // EOT
-              rsp:='Posicion aún no esta en fin de venta';
+              rsp:='Posicion aun no esta en fin de venta';
           end
           else rsp:='Posicion de Carga no Existe';
 
@@ -2153,8 +2196,10 @@ var xvolumen,n1,n2,n3:real;
 begin
   if ContadorAlarma>=10 then begin
     if ContadorAlarma=10 then
-      AgregaLog('Error Comunicación Dispensarios');
+      AgregaLog('Error Comunicacion Dispensarios');
   end;
+
+  EjecutaBuffer;
   
   if (swespera)and((now-horaespera)>3*tmsegundo) then
     swespera:=false;
@@ -2226,6 +2271,7 @@ begin
                  end;
                 end;
               except
+                DespliegaMemo4('Error Estatus Pos: '+inttostr(PosCiclo));
                 AvanzaPosCiclo;
                 NumPaso:=1;
                 exit;
@@ -2429,7 +2475,7 @@ begin
     xmodo:=xmodo+ModoOpera[1];
     if not SwDesHabil then begin
       case estatus of
-        0:xestado:=xestado+'0'; // Sin Comunicación
+        0:xestado:=xestado+'0'; // Sin Comunicaciï¿½n
         1:xestado:=xestado+'1'; // Inactivo (Idle)
         2:xestado:=xestado+'2'; // Cargando (In Use)
         3,4:if not swcargando then
@@ -2491,6 +2537,94 @@ begin
       bListo:= true
    else
       newtimer(etTimeOut,MSecs2Ticks(GtwTimeout));
+end;
+
+procedure Togcvdispensarios_gilbarco2W.DespliegaMemo4(lin: string);
+begin
+  AgregaLog('>> '+lin);
+end;
+
+procedure Togcvdispensarios_gilbarco2W.EjecutaBuffer;
+var
+  objBuffer:TBuffer;
+  metodoEnum:TMetodos;
+begin
+  try
+    objBuffer:=Buffer[0];
+    with objBuffer do begin
+      metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
+
+      case metodoEnum of
+        NOTHING_e:
+          Responder(Socket, 'DISPENSERS|NOTHING|True|');
+        INITIALIZE_e:
+          Responder(Socket, 'DISPENSERS|INITIALIZE|'+Inicializar(parametro));
+        PARAMETERS_e:
+          Responder(Socket, 'DISPENSERS|PARAMETERS|True|');
+        LOGIN_e:
+          Responder(Socket, 'DISPENSERS|LOGIN|'+Login(parametro));
+        LOGOUT_e:
+          Responder(Socket, 'DISPENSERS|LOGOUT|'+Logout);
+        PRICES_e:
+          Responder(Socket, 'DISPENSERS|PRICES|'+IniciaPrecios(parametro));
+        AUTHORIZE_e:
+          Responder(Socket, 'DISPENSERS|AUTHORIZE|'+AutorizarVenta(parametro));
+        STOP_e:
+          Responder(Socket, 'DISPENSERS|STOP|'+DetenerVenta(parametro));
+        START_e:
+          Responder(Socket, 'DISPENSERS|START|'+ReanudarVenta(parametro));
+        SELFSERVICE_e:
+          Responder(Socket, 'DISPENSERS|SELFSERVICE|'+ActivaModoPrepago(parametro));
+        FULLSERVICE_e:
+          Responder(Socket, 'DISPENSERS|FULLSERVICE|'+DesactivaModoPrepago(parametro));
+        BLOCK_e:
+          Responder(Socket, 'DISPENSERS|BLOCK|'+Bloquear(parametro));
+        UNBLOCK_e:
+          Responder(Socket, 'DISPENSERS|UNBLOCK|'+Desbloquear(parametro));
+        PAYMENT_e:
+          Responder(Socket, 'DISPENSERS|PAYMENT|'+FinVenta(parametro));
+        TRANSACTION_e:
+          Responder(Socket, 'DISPENSERS|TRANSACTION|'+TransaccionPosCarga(parametro));
+        STATUS_e:
+          Responder(Socket, 'DISPENSERS|STATUS|'+EstadoPosiciones(parametro));
+        TOTALS_e:
+          Responder(Socket, 'DISPENSERS|TOTALS|'+TotalesBomba(parametro));
+        HALT_e:
+          Responder(Socket, 'DISPENSERS|HALT|'+Detener);
+        RUN_e:
+          Responder(Socket, 'DISPENSERS|RUN|'+Iniciar);
+        SHUTDOWN_e:
+          Responder(Socket, 'DISPENSERS|SHUTDOWN|'+Shutdown);
+        TERMINATE_e:
+          Responder(Socket, 'DISPENSERS|TERMINATE|'+Terminar);
+        STATE_e:
+          Responder(Socket, 'DISPENSERS|STATE|'+ObtenerEstado);
+        TRACE_e:
+          Responder(Socket, 'DISPENSERS|TRACE|'+GuardarLog);
+        SAVELOGREQ_e:
+          Responder(Socket, 'DISPENSERS|SAVELOGREQ|'+GuardarLogPetRes);
+        RESPCMND_e:
+          Responder(Socket, 'DISPENSERS|RESPCMND|'+RespuestaComando(parametro));
+        LOG_e:
+          Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOG|'+ObtenerLog(StrToIntDef(parametro, 0))));
+        LOGREQ_e:
+          Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOGREQ|'+ObtenerLogPetRes(StrToIntDef(parametro, 0))));
+      else
+        Responder(Socket, 'DISPENSERS|'+comando+'|False|Comando desconocido|');
+      end;
+    end;
+
+    Buffer.Delete(0);
+  except
+    on e:Exception do begin
+      if (claveCre<>'') and (key3DES<>'') then
+        AgregaLogPetRes('Error: '+e.Message+'//Clave CRE: '+claveCre+'//Terminacion de Key 3DES: '+copy(key3DES,Length(key3DES)-3,4))
+      else
+        AgregaLogPetRes('Error: '+e.Message);
+      GuardarLogPetRes;
+      Responder(objBuffer.Socket,'DISPENSERS|'+objBuffer.comando+'|False|'+e.Message+'|');
+    end;
+  end;
 end;
 
 end.
