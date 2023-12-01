@@ -15,7 +15,10 @@ object ogcvdispensarios_gilbarco2W: Togcvdispensarios_gilbarco2W
     Top = 32
   end
   object pSerial: TApdComPort
+    Baud = 5700
+    Tracing = tlOn
     TraceName = 'APRO.TRC'
+    TraceAllHex = True
     LogName = 'APRO.LOG'
     OnTriggerAvail = pSerialTriggerAvail
     OnTriggerData = pSerialTriggerData
@@ -26,7 +29,7 @@ object ogcvdispensarios_gilbarco2W: Togcvdispensarios_gilbarco2W
     Enabled = False
     Interval = 100
     OnTimer = Timer1Timer
-    Left = 47
+    Left = 48
     Top = 96
   end
 end
