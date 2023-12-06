@@ -5,7 +5,7 @@ interface
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, SvcMgr, Dialogs,
   ExtCtrls, OoMisc, AdPort, ScktComp, IniFiles, ActiveX, ComObj, ULIBGRAL, CRCs,
-  IdHashMessageDigest, IdHash, uLkJSON;
+  IdHashMessageDigest, IdHash, uLkJSON, ULIBLICENCIAS;
 
 const
       MCxP=4;
@@ -142,6 +142,7 @@ type
     procedure AvanzaPosCiclo;
     procedure DespliegaMemo4(lin:string);
     procedure EjecutaBuffer;
+    function FluStd(msj: string):string;
     { Public declarations }
   end;
 
@@ -187,7 +188,6 @@ type
 
        StFluPos,
        FallosEstat    :integer;
-       SwDesHabilitado:boolean;
        HoraOcc:TDateTime;
        CombActual:Integer;
        MangActual:Integer;
@@ -208,6 +208,8 @@ type
     private
       comando, parametro: string;
       Socket: TCustomWinSocket;
+    public
+      constructor Create(cmd,param:string;skt:TCustomWinSocket);
     end;
 
 
@@ -242,13 +244,22 @@ var
   Tagx        :array[1..3] of integer;
   Swflu       :boolean;
   StFlu,PosFlu:integer;
-  EstatusAct,EstatusAnt  :string;   
+  EstatusAct,EstatusAnt  :string;
+  Licencia3Ok  :Boolean;
 
 implementation
 
 uses TypInfo, StrUtils, Variants;
 
 {$R *.DFM}
+
+constructor TBuffer.Create(cmd,param:string;skt:TCustomWinSocket);
+begin
+  inherited Create;
+  comando := cmd;
+  parametro := param;
+  Socket:=skt;
+end;
 
 function BcdToInt(xBCD : string) : integer;   // Convierte un BCD a Integer
 var xValor, xMult, i : integer;
@@ -316,6 +327,9 @@ procedure Togcvdispensarios_gilbarco2W.ServiceExecute(Sender: TService);
 var
   config:TIniFile;
   lic:string;
+  razonSocial,licAdic:String;
+  esLicTemporal:Boolean;
+  fechaVenceLic:TDateTime;
 begin
   try
     config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
@@ -343,7 +357,22 @@ begin
 //    else begin
 //      claveCre:=ExtraeElemStrSep(lic,2,'|');
 //      key3DES:=ExtraeElemStrSep(lic,3,'|');
-//    end;    
+//    end;
+
+    //LicenciaAdic
+    razonSocial:=config.ReadString('CONF','RazonSocial','');
+    licAdic:=config.ReadString('CONF','LicCVL7','');
+    esLicTemporal:=config.ReadString('CONF','LicCVL7FechaVence','')<>'';
+    fechaVenceLic:=StrToDateDef(config.ReadString('CONF','LicCVL7FechaVence','01/01/1900'),0);
+
+    try
+      Licencia3Ok:=LicenciaValida2(razonSocial,'CVL7','3.1','Abierta',licAdic,1,esLicTemporal,fechaVenceLic);
+    except
+      Licencia3Ok:=false;
+    end;
+
+    if not Licencia3Ok then
+      ListaLog.Add('Datos Licencia: '+razonSocial+'-'+licAdic+'-'+BoolToStr(esLicTemporal)+'-'+DateToStr(fechaVenceLic));
 
     while not Terminated do
       ServiceThread.ProcessRequests(True);
@@ -377,12 +406,12 @@ begin
     end;
     for i:=Length(mensaje) downto 1 do begin              
       if mensaje[i]=#3 then begin
-        checksum:=Copy(mensaje,i+1,4);
+//        checksum:=Copy(mensaje,i+1,4);
         mensaje:=Copy(mensaje,1,i-1);
         Break;
       end;
     end;
-    chks_valido:=checksum=CRC16(mensaje);
+//    chks_valido:=checksum=CRC16(mensaje);
     if mensaje[1]='|' then
       Delete(mensaje,1,1);
     if mensaje[Length(mensaje)]='|' then
@@ -395,10 +424,10 @@ begin
 
       comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
 
-      if not chks_valido then begin
-        Responder(Socket,'DISPENSERS|'+comando+'|False|Checksum invalido|');
-        Exit;
-      end;
+//      if not chks_valido then begin
+//        Responder(Socket,'DISPENSERS|'+comando+'|False|Checksum invalido|');
+//        Exit;
+//      end;
 
       if NoElemStrSep(mensaje,'|')>2 then begin
         for i:=3 to NoElemStrSep(mensaje,'|') do
@@ -409,11 +438,7 @@ begin
       end;
 
       if Transmitiendo then begin
-        objBuffer.Create;
-        objBuffer.comando:=comando;
-        objBuffer.parametro:=parametro;
-        objBuffer.Socket:=Socket;
-        Buffer.Add(objBuffer);
+        Responder(Socket,'DISPENSERS|'+comando+'|False|Comandos en proceso, favor de reintentar|');
         Exit;
       end;
 
@@ -483,10 +508,10 @@ begin
   except
     on e:Exception do begin
       if (claveCre<>'') and (key3DES<>'') then
-        AgregaLogPetRes('Error: '+e.Message+'//Clave CRE: '+claveCre+'//Terminacion de Key 3DES: '+copy(key3DES,Length(key3DES)-3,4))
+        AgregaLogPetRes('Error ServerSocket1ClientRead: '+e.Message+'//Clave CRE: '+claveCre+'//Terminacion de Key 3DES: '+copy(key3DES,Length(key3DES)-3,4))
       else
-        AgregaLogPetRes('Error: '+e.Message);
-      GuardarLogPetRes;
+        AgregaLogPetRes('Error ServerSocket1ClientRead: '+e.Message);
+      GuardarLog;
       Responder(Socket,'DISPENSERS|'+comando+'|False|'+e.Message+'|');
     end;
   end;
@@ -629,11 +654,11 @@ begin
     if (xpos<=MaximoDePosiciones) then begin
       if xpos=0 then begin
         for xpos:=1 to MaxPosCarga do
-          TPosCarga[xpos].SwDesHabilitado:=True;
+          TPosCarga[xpos].SwDesHabil:=True;
         Result:='True|';
       end
       else if (xpos in [1..maxposcarga]) then begin
-        TPosCarga[xpos].SwDesHabilitado:=True;
+        TPosCarga[xpos].SwDesHabil:=True;
         Result:='True|';
       end;
     end
@@ -659,11 +684,11 @@ begin
     if (xpos<=MaximoDePosiciones) then begin
       if xpos=0 then begin
         for xpos:=1 to MaxPosCarga do
-          TPosCarga[xpos].SwDesHabilitado:=False;
+          TPosCarga[xpos].SwDesHabil:=False;
         Result:='True|';
       end
       else if (xpos in [1..maxposcarga]) then begin
-        TPosCarga[xpos].SwDesHabilitado:=False;
+        TPosCarga[xpos].SwDesHabil:=False;
         Result:='True|';
       end;
     end
@@ -684,6 +709,10 @@ begin
 
     if not detenido then begin
       pSerial.Open:=False;
+      pSerial.Tracing:= tlOff;
+      pSerial.Open:= false;
+      pSerial.DTR:= false;
+      pSerial.RTS:= false;
       Timer1.Enabled:=False;
       detenido:=True;
       estado:=0;
@@ -708,6 +737,9 @@ begin
       else if detenido then
         pSerial.Open:=True;
     end;
+
+    wTriggerEOT:= pSerial.AddDataTrigger(#$F0,true);
+    wTriggerLF:= pSerial.AddDataTrigger(#$8A,true);
 
     detenido:=False;
     estado:=1;
@@ -1150,29 +1182,10 @@ var
   xpos,i:Integer;
 begin
   try
-    for xpos:=1 to MaxPosCarga do begin
-      with TPosCarga[xpos] do if xpos<=MaximoDePosiciones then begin
-        for i:=1 to NoComb do begin
-          precioComb:=StrToFloatDef(ExtraeElemStrSep(msj,TComb[i],'|'),-1);
-          if precioComb=-1 then begin
-            Result:='False|El precio '+IntToStr(i)+' es incorrecto|';
-            Exit;
-          end;
-          if precioComb<=0 then
-            Continue;
-          LPrecios[TComb[i]]:=precioComb;
-          if TPosCarga[xpos].DigitosGilbarco=6 then begin
-            CambiaPrecio6(xpos,i,1,precioComb);
-            CambiaPrecio6(xpos,i,2,precioComb);
-          end
-          else begin
-            CambiaPrecio8(xpos,i,1,precioComb);
-            CambiaPrecio8(xpos,i,2,precioComb);
-          end;                                            
-        end;
-      end;
-    end;
-    Result:='True|';
+    if EjecutaComando('CPREC '+msj)>0 then
+      Result:='True|'
+    else
+      Result:='False|No fue posible aplicar comando de cambio de precios|';
   except
     on e:Exception do
       Result:='False|Excepcion: '+e.Message+'|';
@@ -1188,7 +1201,6 @@ var iMaxIntentos, iNoIntento, i , xpos: integer;
 begin
   try
     try
-      Transmitiendo:=True;
       Timer1.Enabled:=False;
       xpos:=xNPos;
       sw2:=false;
@@ -1203,6 +1215,7 @@ begin
           iBytesEsperados:= 1;
           if ( iComando in [$20] ) then begin
             sw2:=true;
+            Transmitiendo:=True;
           end;
         end
         else begin
@@ -1249,6 +1262,7 @@ begin
           repeat
              Sleep(5);
           until ( ( bListo ) or ( timerexpired(etTimeOut) ) );
+          AgregaLog('sRespuesta1 Length: '+IntToStr(length(sRespuesta)));
           if ( bListo ) then begin
             ls:=length(sRespuesta);
             if TPosCarga[xpos].DigitosGilbarco=6 then begin
@@ -1299,6 +1313,7 @@ begin
             sRespuesta:= '';
             pSerial.FlushInBuffer;
             pSerial.FlushOutBuffer;
+            AgregaLog('sDataBlock: '+sDataBlock);
             for i:= 1 to length ( sDataBlock ) do begin
                pSerial.PutChar(sDataBlock[i]);
                repeat
@@ -1316,7 +1331,8 @@ begin
             repeat
                Sleep(5);
             until ( ( bListo ) or ( timerexpired(etTimeOut) ) );        // FALLA
-            AgregaLog('sRespuesta Length: '+IntToStr(length(sRespuesta)));
+            Transmitiendo:=False;
+            AgregaLog('sRespuesta2 Length: '+IntToStr(length(sRespuesta)));
             if length(sRespuesta)>0 then
               bOk:= ( LoNibbleChar(sRespuesta[1])=xNPos )
             else
@@ -1364,6 +1380,7 @@ begin
   rTotalizadorLitros3:= 0;
   rTotalizadorPesos3:= 0;
   bOk:= ( ( TransmiteComando($50,xNPos,'') ) and ( length(sRespuesta)>=34 ) );
+  AgregaLog(IfThen(bOk,'Totales correctos','Totales incorrectos'));
   if ( bOk ) then begin
     delete(sRespuesta,1,1);
     while ( length(sRespuesta)>30 ) do begin
@@ -1430,17 +1447,25 @@ function Togcvdispensarios_gilbarco2W.DameLecturas6(xNPos: integer;
   var xNMang: integer; var rLitros, rPrecio, rPesos: real): boolean;
 var bOk : boolean;
 begin
-  bOk:= ( ( TransmiteComando($40,xNPos,'') ) and ( length(sRespuesta)>=33 ) );
-  if ( bOk ) then begin
-    xNMang:= DataControlWordValue(#$F6,1) + 1;
-    rPrecio:= DataControlWordValue(#$F7,4);
-    rLitros:= DataControlWordValue(#$F9,6);
-    rPesos:= DataControlWordValue(#$FA,6);
-    rPrecio:= rPrecio/GtwDivPrecio;
-    rLitros:= rLitros/TPosCarga[PosCiclo].DivLitros;
-    rPesos:= rPesos/TPosCarga[PosCiclo].DivImporte;
+  try
+    bOk:= ( ( TransmiteComando($40,xNPos,'') ) and ( length(sRespuesta)>=33 ) );
+    if bOk then
+      AgregaLog('Lecturas correctas');
+    if ( bOk ) then begin
+      xNMang:= DataControlWordValue(#$F6,1) + 1;
+      AgregaLog('Manguera recibida: '+IntToStr(xNMang));
+      rPrecio:= DataControlWordValue(#$F7,4);
+      rLitros:= DataControlWordValue(#$F9,6);
+      rPesos:= DataControlWordValue(#$FA,6);
+      rPrecio:= rPrecio/GtwDivPrecio;
+      rLitros:= rLitros/TPosCarga[PosCiclo].DivLitros;
+      rPesos:= rPesos/TPosCarga[PosCiclo].DivImporte;
+    end;
+    result:= bOk;
+  except
+    on e:Exception do
+      AgregaLog('Error DameLecturas6:'+e.Message);
   end;
-  result:= bOk;
 end;
 
 function Togcvdispensarios_gilbarco2W.DameLecturas8(xNPos: integer;
@@ -1714,6 +1739,10 @@ begin
     end
     else
       pSerial.StopBits:=StrToInt(ExtraeElemStrSep(datosPuerto,6,','));
+
+    pSerial.TraceAllHex:= true;
+    pSerial.TraceName:= 'c:\OGTrace.txt';
+    pSerial.Tracing:= tlOn;
   except
     on e:Exception do
       Result:='False|Excepcion: '+e.Message+'|';
@@ -1750,20 +1779,61 @@ begin
 
     TipoClb:='1';
 
+    DecimalesGilbarco:=2;
+    DigGilbarco:=6;
+    GtwDivPresetLts:=100;
+    GtwDivPresetPesos:=100;
+    GtwDivPrecio:=100;
+    GtwDivImporte:=100;
+    GtwDivLitros:=100;
+    GtwDivTotLts:=100;
+    GtwDivTotImporte:=100;
+    GtwTimeout:=1000;
+    GtwTiempoCmnd:=100;
+
     for i:=1 to NoElemStrEnter(variables) do begin
       variable:=ExtraeElemStrEnter(variables,i);
       if UpperCase(ExtraeElemStrSep(variable,1,'='))='DECIMALESGILBARCO' then
         DecimalesGilbarco:=StrToInt(ExtraeElemStrSep(variable,2,'='))
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='DIGITOSGILBARCO' then
         DigGilbarco:=StrToInt(ExtraeElemStrSep(variable,2,'='))
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWDIVPRESETLTS' then
+        GtwDivPresetLts:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),100)
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWDIVPRESETPESOS' then
+        GtwDivPresetPesos:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),100)
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWDIVPRECIO' then
+        GtwDivPrecio:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),100)
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWDIVIMPORTE' then
+        GtwDivImporte:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),100)
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWDIVLITROS' then
+        GtwDivLitros:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),100)
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWDIVTOTLTS' then
+        GtwDivTotLts:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),100)
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWDIVTOTIMPORTE' then
+        GtwDivTotImporte:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),100)
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWTIMEOUT' then
+        GtwTimeout:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),1000)
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWTIEMPOCMND' then
+        GtwTiempoCmnd:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),100)
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='TIPOCLB' then
         TipoClb:=ExtraeElemStrSep(variable,2,'=');
-    end;    
+    end;
 
     Result:=AgregaPosCarga(dispensarios);
 
     if Result<>'' then
       Exit;
+
+    productos := js.Field['Products'];
+
+    for i:=0 to productos.Count-1 do begin
+      productID:=productos.Child[i].Field['ProductId'].Value;
+      if productos.Child[i].Field['Price'].Value<0 then begin
+        Result:='False|El precio '+IntToStr(productID)+' es incorrecto|';
+        Exit;
+      end;
+      LPrecios[productID]:=productos.Child[i].Field['Price'].Value;
+    end;
 
     PreciosInicio:=False;
     estado:=0;
@@ -1816,10 +1886,11 @@ begin
 end;
 
 procedure Togcvdispensarios_gilbarco2W.ProcesaComandos;
-var ss,rsp,ss2            :string;
+var ss,rsp,ss2,precios       :string;
     xcmnd,xpos,xcomb,i,xc,
     xp,xfolio                :integer;
     ximporte,xlitros  :real;
+    precioComb:Double;
 begin
   try
     // Checa Comandos
@@ -1829,79 +1900,37 @@ begin
         ss:=ExtraeElemStrSep(TabCmnd[xcmnd].Comando,1,' ');
         AgregaLog(TabCmnd[xcmnd].Comando);
         // CMND: FLU ON
-//        if ss='FLUSTD' then begin
-//          rsp:='OK';
-//          // Carga valor x combustible
-//          for i:=1 to 3 do
-//            tagx[i]:=0;
-//          Q_CombIb.Active:=false;
-//          Q_CombIb.Active:=true;
-//          Q_CombIb.First;
-//          while not Q_CombIb.Eof do begin
-//            if Q_CombIbClave.AsInteger in [1..MaxComb] then begin
-//              xcomb:=Q_CombIbClave.AsInteger;
-//              if xcomb in [1..3] then begin
-//                ss:=Q_CombIbTag3.AsString;
-//                if length(ss)=1 then begin
-//                  xc:=ord(ss[1])-65;
-//                  if xc in [0..9] then
-//                    tagx[xcomb]:=xc;
-//                end;
-//              end;
-//            end;
-//            Q_CombIb.Next;
-//          end;
-//          // Fin
-//
-//          // Carga valores pcar
-//          Q_Pcar.Active:=false;
-//          Q_Pcar.Active:=true;
-//          while not Q_Pcar.Eof do begin
-//            xpos:=Q_PcarPosCarga.AsInteger;
-//            if (xpos<=MaximoDePosiciones) then begin
-//              TAdicf[xpos,1]:=trunc(Q_PcarSlowFlow.AsFloat*10+0.5);
-//              TAdicf[xpos,2]:=trunc(Q_PcarSlowFlow2.AsFloat*10+0.5);
-//              TAdicf[xpos,3]:=trunc(Q_PcarSlowFlow3.AsFloat*10+0.5);
-//            end;
-//            Q_Pcar.Next;
-//          end;
-//          Q_Pcar.Active:=false;
-//          // fin
-//
-//          case TipoClb[1] of
-//           '2':begin  // Por posicion de carga
-//                 for xpos:=1 to MaxPosCarga do
-//                   TPosCarga[xpos].StFluPos:=1;
-//               end;
-//          else begin  // General
-//                 StFlu:=1;
-//               end;
-//          end;
-//        end
+        if ss='FLUSTD' then begin
+          rsp:='OK';
+
+          case TipoClb[1] of
+           '2':begin  // Por posicion de carga
+                 for xpos:=1 to MaxPosCarga do
+                   TPosCarga[xpos].StFluPos:=1;
+               end;
+          else begin  // General
+                 StFlu:=1;
+               end;
+          end;
+        end
 //        // CMND: FLU OFF
-//        else if ss='FLUMIN' then begin
-//          rsp:='OK';
-//          StFlu:=11;
-//          for xpos:=1 to MaxPosCarga do
-//            TPosCarga[xPos].StFluPos:=11;
-//          SwCerrar:=true;
-//        end
+        else if ss='FLUMIN' then begin
+          rsp:='OK';
+          StFlu:=11;
+          for xpos:=1 to MaxPosCarga do
+            TPosCarga[xPos].StFluPos:=11;
+        end
 //        // CMND: FLU $     Especial para tipoclb=2
-//        else if ss='FLU$' then begin
-//          rsp:='OK';
-//          ss:=TabCmnd[xcmnd].Comando;
-//          delete(ss,1,5);
-//          AgregaLog(ss);
-//          ss2:=HexSepToStr(ss);
-//          TransmiteComandoEsp(ss2);
-//
-//          if swcerrar then begin
-//            for xpos:=1 to MaxPosCarga do
-//              TPosCarga[xpos].StFluPos:=0;
-//          end;
-//        end
+        else if ss='FLU$' then begin
+          rsp:='OK';
+          ss:=TabCmnd[xcmnd].Comando;
+          delete(ss,1,5);
+          AgregaLog(ss);
+          ss2:=HexSepToStr(ss);
+          TransmiteComandoEsp(ss2);
+        end
         // ORDENA CARGA DE COMBUSTIBLE
-        {else} if ss='OCC' then begin
+        else if ss='OCC' then begin
           xpos:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '),0);
           rsp:='OK';
           if (xpos in [1..MaxPosCarga]) then begin
@@ -2037,21 +2066,8 @@ begin
           else rsp:='Posicion de Carga no Existe';
 
         end
-        // CMND: DESHABILITA POSICIOND DE CARGA
-        else if ss='DPC' then begin
-          rsp:='OK';
-          xpos:=strtointdef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '),0);
-          if xpos in [1..MaxPosCarga] then
-            TPosCarga[xpos].SwDesHabil:=true;
-        end
-        else if ss='HPC' then begin
-          rsp:='OK';
-          xpos:=strtointdef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '),0);
-          if xpos in [1..MaxPosCarga] then
-            TPosCarga[xpos].SwDesHabil:=false;
-        end
         // CMND: DESAUTORIZA VENTA DE COMBUSTIBLE
-        else if (ss='DVC')or(ss='PARAR') then begin
+        else if (ss='DVC') then begin
           rsp:='OK';
           xpos:=strtointdef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '),0);
           if xpos in [1..MaxPosCarga] then begin
@@ -2067,6 +2083,61 @@ begin
           if xpos in [1..MaxPosCarga] then begin
             if (TPosCarga[xpos].estatus in [8]) then begin
               if ReanudaDespacho(xpos) then begin
+              end;
+            end;
+          end;
+        end
+        else if (ss='TOTAL') then begin
+          xpos:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '),0);;
+          rsp:='OK';
+          with TPosCarga[xpos] do begin
+            if TabCmnd[xcmnd].SwNuevo then begin
+              swtotales:=True;
+              TabCmnd[xcmnd].SwNuevo:=false;
+            end;
+            if not swtotales then begin
+              rsp:='OK'+FormatFloat('0.000',ToTalLitros[1])+'|'+FormatoMoneda(ToTalLitros[1]*LPrecios[TComb[1]])+'|'+
+                              FormatFloat('0.000',ToTalLitros[2])+'|'+FormatoMoneda(ToTalLitros[2]*LPrecios[TComb[2]])+'|'+
+                              FormatFloat('0.000',ToTalLitros[3])+'|'+FormatoMoneda(ToTalLitros[3]*LPrecios[TComb[3]]);
+              SwAplicaCmnd:=True;
+            end
+            else
+              SwAplicaCmnd:=False;
+          end;
+        end
+        else if (ss='CPREC') then begin
+          precios:=ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' ');
+          for xpos:=1 to MaxPosCarga do begin
+            with TPosCarga[xpos] do if xpos<=MaximoDePosiciones then begin
+              for i:=1 to NoComb do begin
+                precioComb:=StrToFloatDef(ExtraeElemStrSep(precios,TComb[i],'|'),-1);
+                if precioComb=-1 then begin
+                  rsp:='El precio '+IntToStr(i)+' es incorrecto|';
+                  Exit;
+                end;
+                if precioComb<=0 then
+                  Continue;
+                LPrecios[TComb[i]]:=precioComb;
+                AgregaLog('E> Cambio de precios: '+inttoclavenum(xpos,2));
+                AgregaLog('PrecioComb: '+FloatToStr(precioComb));
+                if TPosCarga[xpos].DigitosGilbarco=6 then begin
+                  if CambiaPrecio6(xpos,TMang[i],1,precioComb) then begin
+                    Sleep(200);
+                    if not CambiaPrecio6(xpos,i,2,precioComb) then
+                      rsp:='Error en cambio de precios';
+                  end
+                  else
+                    rsp:='Error en cambio de precios';
+                end
+                else begin
+                  if CambiaPrecio8(xpos,TMang[i],1,precioComb) then begin
+                    Sleep(200);
+                    if not CambiaPrecio8(xpos,i,2,precioComb) then
+                      rsp:='Error en cambio de precios';
+                  end
+                  else
+                    rsp:='Error en cambio de precios';
+                end;
               end;
             end;
           end;
@@ -2198,8 +2269,6 @@ begin
     if ContadorAlarma=10 then
       AgregaLog('Error Comunicacion Dispensarios');
   end;
-
-  EjecutaBuffer;
   
   if (swespera)and((now-horaespera)>3*tmsegundo) then
     swespera:=false;
@@ -2217,58 +2286,62 @@ begin
         case NumPaso of
           0:if (estatus=1)and(SwNivelPrecio) then begin     // NIVEL DE PRECIOS
               if (Now>=HoraNivelPrecio) then begin
-                AgregaLog('E> Pon Nivel Precio: '+inttoclavenum(PosCiclo,2));
-                if PonNivelPrecio(PosCiclo,1) then begin
-                  swnivelprecio:=false;
+                if not swdeshabil then begin   // no polea los que estan deshabilitados
+                  AgregaLog('E> Pon Nivel Precio: '+inttoclavenum(PosCiclo,2));
+                  if PonNivelPrecio(PosCiclo,1) then begin
+                    swnivelprecio:=false;
+                  end;
                 end;
               end;
             end;
           1:begin                           // ESTATUS
               try
-                EstatusAnt:=Estatus;
-                Estatus:=DameEstatus(PosCiclo);    // Aqui bota cuando no hay posicion activa
-                EstatusDispensarios;
-                ContadorAlarma:=0;
-                if (Estatusant=0)and(estatus=1) then begin
-                  SwNivelPrecio:=true;
-                  HoraNivelPrecio:=Now+5*TMSegundo;
-                  Swleeventa:=true;
-                  SwTotales:=true;
-                end;
-                if (EstatusAnt in [3,4])and(Estatus=1) then begin // Termina Venta
-                  swcargando:=false;
-                  if EsperaFinVenta=1 then
-                    Estatus:=4
-                  else
+                if not swdeshabil then begin   // no polea los que estan deshabilitados
+                  EstatusAnt:=Estatus;
+                  Estatus:=DameEstatus(PosCiclo);    // Aqui bota cuando no hay posicion activa
+                  EstatusDispensarios;
+                  ContadorAlarma:=0;
+                  if (Estatusant=0)and(estatus=1) then begin
+                    SwNivelPrecio:=true;
+                    HoraNivelPrecio:=Now+5*TMSegundo;
+                    Swleeventa:=true;
                     SwTotales:=true;
-                end;
-                Case TipoClb[1] of
-                  '2':begin
-                        if (Estatus=1)and(StFluPos=1)and(swflu) then begin   // Sube
-                          MandaFlujoPos(PosCiclo,TAdicf[PosCiclo,1]);
-                          StFluPos:=0;
+                  end;
+                  if (EstatusAnt in [3,4])and(Estatus=1) then begin // Termina Venta
+                    swcargando:=false;
+                    if EsperaFinVenta=1 then
+                      Estatus:=4
+                    else
+                      SwTotales:=true;
+                  end;
+                  Case TipoClb[1] of
+                    '2':begin
+                          if (Estatus=1)and(StFluPos=1)and(swflu) then begin   // Sube
+                            MandaFlujoPos(PosCiclo,TAdicf[PosCiclo,1]);
+                            StFluPos:=0;
+                          end;
+                          if (StFluPos=11) then  // Baja todos
+                            MandaFlujoPos(23,0);
                         end;
-                        if (StFluPos=11) then  // Baja todos
-                          MandaFlujoPos(23,0);
+                   else begin
+                      if (Estatus=1)and(Stflu=1)and(swflu) then begin // Manda Flu
+                        if EnviaPresetFlu(PosCiclo,true) then begin
+                          StFlu:=2;
+                          PosFlu:=PosCiclo;
+                        end;
                       end;
-                 else begin
-                    if (Estatus=1)and(Stflu=1)and(swflu) then begin // Manda Flu
-                      if EnviaPresetFlu(PosCiclo,true) then begin
-                        StFlu:=2;
-                        PosFlu:=PosCiclo;
+                      if (Estatus=1)and(Stflu=11)and(swflu) then begin // Manda Flu
+                        if EnviaPresetFlu(PosCiclo,false) then begin
+                          StFlu:=12;
+                          PosFlu:=PosCiclo;
+                        end;
                       end;
-                    end;
-                    if (Estatus=1)and(Stflu=11)and(swflu) then begin // Manda Flu
-                      if EnviaPresetFlu(PosCiclo,false) then begin
-                        StFlu:=12;
-                        PosFlu:=PosCiclo;
+                      if (PosFlu=PosCiclo)and(stflu in[2,12])and(estatus in[2,9]) then begin // detener flu
+                        if DetenerDespacho(PosFlu) then
+                          stflu:=0;
                       end;
-                    end;
-                    if (PosFlu=PosCiclo)and(stflu in[2,12])and(estatus in[2,9]) then begin // detener flu
-                      if DetenerDespacho(PosFlu) then
-                        stflu:=0;
-                    end;
-                 end;
+                   end;
+                  end;
                 end;
               except
                 DespliegaMemo4('Error Estatus Pos: '+inttostr(PosCiclo));
@@ -2278,89 +2351,98 @@ begin
               end;
             end;
           2:if (swleeventa)and(estatus>0) then begin       // LEE VENTA TERMINADA
-              if TPosCarga[PosCiclo].DigitosGilbarco=6 then begin
-                AgregaLog('E> FIN DE VENTA(6): '+inttoclavenum(PosCiclo,2));
-                if DameLecturas6(PosCiclo,PosActual,
-                                             Volumen,Precio,Importe) then
-                begin
-                  xvolumen:=ajustafloat(dividefloat(importe,precio),3);
-                  if abs(volumen-xvolumen)>0.5 then
-                    volumen:=xvolumen;
-                  AgregaLog('R> '+FormatFloat('###,##0.00',Volumen)+' / '+FormatFloat('###,##0.00',precio)+' / '+FormatFloat('###,##0.00',importe));
-                  swleeventa:=false;
-                end;
-              end
-              else begin
-                AgregaLog('E> FIN DE VENTA(8): '+inttoclavenum(PosCiclo,2));
-                if DameLecturas8(PosCiclo,PosActual,
-                                             Volumen,Precio,Importe) then
-                begin
-                  xvolumen:=ajustafloat(dividefloat(importe,precio),3);
-                  if abs(volumen-xvolumen)>0.5 then
-                    volumen:=xvolumen;
-                  AgregaLog('R> '+FormatFloat('###,##0.00',Volumen)+' / '+FormatFloat('###,##0.00',precio)+' / '+FormatFloat('###,##0.00',importe));
-                  swleeventa:=false;
+              if not swdeshabil then begin   // no polea los que estan deshabilitados
+                if TPosCarga[PosCiclo].DigitosGilbarco=6 then begin
+                  AgregaLog('E> FIN DE VENTA(6): '+inttoclavenum(PosCiclo,2));
+                  if DameLecturas6(PosCiclo,PosActual,
+                                               Volumen,Precio,Importe) then
+                  begin
+                    HoraOcc:=Now;
+                    xvolumen:=ajustafloat(dividefloat(importe,precio),3);
+                    if abs(volumen-xvolumen)>0.5 then
+                      volumen:=xvolumen;
+                    AgregaLog('R> '+FormatFloat('###,##0.00',Volumen)+' / '+FormatFloat('###,##0.00',precio)+' / '+FormatFloat('###,##0.00',importe));
+                    swleeventa:=false;
+                  end;
+                end
+                else begin
+                  AgregaLog('E> FIN DE VENTA(8): '+inttoclavenum(PosCiclo,2));
+                  if DameLecturas8(PosCiclo,PosActual,
+                                               Volumen,Precio,Importe) then
+                  begin
+                    HoraOcc:=Now;
+                    xvolumen:=ajustafloat(dividefloat(importe,precio),3);
+                    if abs(volumen-xvolumen)>0.5 then
+                      volumen:=xvolumen;
+                    AgregaLog('R> '+FormatFloat('###,##0.00',Volumen)+' / '+FormatFloat('###,##0.00',precio)+' / '+FormatFloat('###,##0.00',importe));
+                    swleeventa:=false;
+                  end;
                 end;
               end;
             end;
           3:if (swtotales)and(estatus>0) then begin        // LEE TOTALES
-              if DigitosGilbarco=6 then begin
-                AgregaLog('E> Lee Totales(6): '+inttoclavenum(PosCiclo,2));
-                if DameTotales6(PosCiclo,
-                                        xTotalLitros[1],n1,
-                                        xTotalLitros[2],n2,
-                                        xTotalLitros[3],n3)then
-                begin
-                  for i:=1 to nocomb do begin
-                    xcomb:=Tcomb[i];
-                    xp:=PosicionDeCombustible(PosCiclo,xcomb);
-                    if xp>0 then begin
-                      TotalLitros[xp]:=xTotalLitros[i];
+              if not swdeshabil then begin   // no polea los que estan deshabilitados
+                if DigitosGilbarco=6 then begin
+                  AgregaLog('E> Lee Totales(6): '+inttoclavenum(PosCiclo,2));
+                  if DameTotales6(PosCiclo,
+                                          xTotalLitros[1],n1,
+                                          xTotalLitros[2],n2,
+                                          xTotalLitros[3],n3)then
+                  begin
+                    for i:=1 to nocomb do begin
+                      xcomb:=Tcomb[i];
+                      xp:=PosicionDeCombustible(PosCiclo,xcomb);
+                      if xp>0 then begin
+                        TotalLitros[xp]:=xTotalLitros[i];
+                      end;
                     end;
+                    AgregaLog('R> '+FormatFloat('###,###,##0.00',TotalLitros[1])+' / '+FormatFloat('###,###,##0.00',TotalLitros[2])+' / '+FormatFloat('###,###,##0.00',TotalLitros[3]));
+                    SwTotales:=false;
                   end;
-                  AgregaLog('R> '+FormatFloat('###,###,##0.00',TotalLitros[1])+' / '+FormatFloat('###,###,##0.00',TotalLitros[2])+' / '+FormatFloat('###,###,##0.00',TotalLitros[3]));
-                  SwTotales:=false;
-                end;
-              end
-              else begin
-                AgregaLog('E> Lee Totales(8): '+inttoclavenum(PosCiclo,2));
-                if DameTotales8(PosCiclo,
-                                        xTotalLitros[1],n1,
-                                        xTotalLitros[2],n2,
-                                        xTotalLitros[3],n3)then
-                begin
-                  for i:=1 to nocomb do begin
-                    xcomb:=Tcomb[i];
-                    xp:=PosicionDeCombustible(PosCiclo,xcomb);
-                    if xp>0 then begin
-                      TotalLitros[xp]:=xTotalLitros[i];
+                end
+                else begin
+                  AgregaLog('E> Lee Totales(8): '+inttoclavenum(PosCiclo,2));
+                  if DameTotales8(PosCiclo,
+                                          xTotalLitros[1],n1,
+                                          xTotalLitros[2],n2,
+                                          xTotalLitros[3],n3)then
+                  begin
+                    for i:=1 to nocomb do begin
+                      xcomb:=Tcomb[i];
+                      xp:=PosicionDeCombustible(PosCiclo,xcomb);
+                      if xp>0 then begin
+                        TotalLitros[xp]:=xTotalLitros[i];
+                      end;
                     end;
+                    AgregaLog('R> '+FormatFloat('###,###,##0.00',TotalLitros[1])+' / '+FormatFloat('###,###,##0.00',TotalLitros[2])+' / '+FormatFloat('###,###,##0.00',TotalLitros[3]));
+                    SwTotales:=false;
                   end;
-                  AgregaLog('R> '+FormatFloat('###,###,##0.00',TotalLitros[1])+' / '+FormatFloat('###,###,##0.00',TotalLitros[2])+' / '+FormatFloat('###,###,##0.00',TotalLitros[3]));
-                  SwTotales:=false;
                 end;
               end;
             end;
           4:if (estatus=5)and(ModoOpera='Normal') then begin // AUTORIZA TANQUE LLENO
-              AgregaLog('E> Autoriza: '+inttoclavenum(PosCiclo,2));
-              if Autoriza(PosCiclo) then begin
+              if not swdeshabil then begin   // no polea los que estan deshabilitados
+                AgregaLog('E> Autoriza: '+inttoclavenum(PosCiclo,2));
+                Autoriza(PosCiclo);
               end;
             end;
           5:if estatus=2 then begin                 // LEE VENTA PROCESO
-              if TPosCarga[PosCiclo].DigitosGilbarco=6 then begin
-                AgregaLog('E> Lee Venta Proc(6): '+inttoclavenum(PosCiclo,2));
-                if DameVentaProceso6(PosCiclo,Importe) then begin
-                  volumen:=0;
-                  precio:=0;
-                  AgregaLog('R> '+FormatFloat('###,##0.00',importe));
-                end;
-              end
-              else begin
-                AgregaLog('E> Lee Venta Proc(8): '+inttoclavenum(PosCiclo,2));
-                if DameVentaProceso8(PosCiclo,Importe) then begin
-                  volumen:=0;
-                  precio:=0;
-                  AgregaLog('R> '+FormatFloat('###,##0.00',importe));
+              if not swdeshabil then begin   // no polea los que estan deshabilitados
+                if TPosCarga[PosCiclo].DigitosGilbarco=6 then begin
+                  AgregaLog('E> Lee Venta Proc(6): '+inttoclavenum(PosCiclo,2));
+                  if DameVentaProceso6(PosCiclo,Importe) then begin
+                    volumen:=0;
+                    precio:=0;
+                    AgregaLog('R> '+FormatFloat('###,##0.00',importe));
+                  end;
+                end
+                else begin
+                  AgregaLog('E> Lee Venta Proc(8): '+inttoclavenum(PosCiclo,2));
+                  if DameVentaProceso8(PosCiclo,Importe) then begin
+                    volumen:=0;
+                    precio:=0;
+                    AgregaLog('R> '+FormatFloat('###,##0.00',importe));
+                  end;
                 end;
               end;
             end;
@@ -2369,40 +2451,41 @@ begin
               swflu:=true; // Inicia despues del primer proceso de comandos
             end;
           7:begin          // CAMBIA PRECIO
-              for xp:=1 to NoComb do begin
-                if Estatus=1 then begin
-                  if TCambioPrecN1[xp] then begin
-                    if TPosCarga[PosCiclo].DigitosGilbarco=6 then begin
-                      AgregaLog('E> Cambia Precio(6): '+inttoclavenum(PosCiclo,2)+' - '+inttoclavenum(xp,2));
-                      if CambiaPrecio6(PosCiclo,xp,1,TNuevoPrec[xp]) then begin
-                        TCambioPrecN1[xp]:=false;
+              if not swdeshabil then begin   // no polea los que estan deshabilitados
+                for xp:=1 to NoComb do begin
+                  if Estatus=1 then begin
+                    if TCambioPrecN1[xp] then begin
+                      if TPosCarga[PosCiclo].DigitosGilbarco=6 then begin
+                        AgregaLog('E> Cambia Precio(6): '+inttoclavenum(PosCiclo,2)+' - '+inttoclavenum(xp,2));
+                        if CambiaPrecio6(PosCiclo,xp,1,TNuevoPrec[xp]) then begin
+                          TCambioPrecN1[xp]:=false;
+                        end;
+                      end
+                      else begin
+                        AgregaLog('E> Cambia Precio(8): '+inttoclavenum(PosCiclo,2)+' - '+inttoclavenum(xp,2));
+                        if CambiaPrecio8(PosCiclo,xp,1,TNuevoPrec[xp]) then begin
+                          TCambioPrecN1[xp]:=false;
+                        end;
                       end;
                     end
-                    else begin
-                      AgregaLog('E> Cambia Precio(8): '+inttoclavenum(PosCiclo,2)+' - '+inttoclavenum(xp,2));
-                      if CambiaPrecio8(PosCiclo,xp,1,TNuevoPrec[xp]) then begin
-                        TCambioPrecN1[xp]:=false;
-                      end;
-                    end;
-                  end
-                  else if TCambioPrecN2[xp] then begin
-                    if TPosCarga[PosCiclo].DigitosGilbarco=6 then begin
-                      AgregaLog('E> Cambia Precio(6): '+inttoclavenum(PosCiclo,2)+' - '+inttoclavenum(xp,2));
-                      if CambiaPrecio6(PosCiclo,xp,1,TNuevoPrec[xp]) then begin
-                        TCambioPrecN2[xp]:=false;
-                      end;
-                    end
-                    else begin
-                      AgregaLog('E> Cambia Precio(8): '+inttoclavenum(PosCiclo,2)+' - '+inttoclavenum(xp,2));
-                      if CambiaPrecio8(PosCiclo,xp,1,TNuevoPrec[xp]) then begin
-                        TCambioPrecN2[xp]:=false;
+                    else if TCambioPrecN2[xp] then begin
+                      if TPosCarga[PosCiclo].DigitosGilbarco=6 then begin
+                        AgregaLog('E> Cambia Precio(6): '+inttoclavenum(PosCiclo,2)+' - '+inttoclavenum(xp,2));
+                        if CambiaPrecio6(PosCiclo,xp,1,TNuevoPrec[xp]) then begin
+                          TCambioPrecN2[xp]:=false;
+                        end;
+                      end
+                      else begin
+                        AgregaLog('E> Cambia Precio(8): '+inttoclavenum(PosCiclo,2)+' - '+inttoclavenum(xp,2));
+                        if CambiaPrecio8(PosCiclo,xp,1,TNuevoPrec[xp]) then begin
+                          TCambioPrecN2[xp]:=false;
+                        end;
                       end;
                     end;
                   end;
                 end;
               end;
             end;
-
         end;
       finally
         swespera:=false;
@@ -2490,6 +2573,8 @@ begin
     end
     else xestado:=xestado+'7'; // Deshabilitado
     xcomb:=CombustibleEnPosicion(xpos,PosActual);
+    CombActual:=xcomb;
+    MangActual:=TMang[xcomb];
     ss:=inttoclavenum(xpos,2)+'/'+inttostr(xcomb);
     ss:=ss+'/'+FormatFloat('###0.##',volumen);
     ss:=ss+'/'+FormatFloat('#0.##',precio);
@@ -2550,8 +2635,12 @@ var
   metodoEnum:TMetodos;
 begin
   try
+    if Buffer.Count=0 then
+      Exit;
+    AgregaLog('Ejecutó buffer');
     objBuffer:=Buffer[0];
     with objBuffer do begin
+      AgregaLog('Comando buffer:'+comando);
       metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
 
       case metodoEnum of
@@ -2618,13 +2707,51 @@ begin
   except
     on e:Exception do begin
       if (claveCre<>'') and (key3DES<>'') then
-        AgregaLogPetRes('Error: '+e.Message+'//Clave CRE: '+claveCre+'//Terminacion de Key 3DES: '+copy(key3DES,Length(key3DES)-3,4))
+        AgregaLogPetRes('Error EjecutaBuffer: '+e.Message+'//Clave CRE: '+claveCre+'//Terminacion de Key 3DES: '+copy(key3DES,Length(key3DES)-3,4))
       else
-        AgregaLogPetRes('Error: '+e.Message);
+        AgregaLogPetRes('Error EjecutaBuffer: '+e.Message);
       GuardarLogPetRes;
       Responder(objBuffer.Socket,'DISPENSERS|'+objBuffer.comando+'|False|'+e.Message+'|');
     end;
   end;
+end;
+
+function Togcvdispensarios_gilbarco2W.FluStd(msj: string): string;
+var
+  i,xpos:Integer;
+  mangueras:string;
+  config:TIniFile;  
+begin
+  if Licencia3Ok then begin
+    try
+      AgregaLog('TipoClb: '+TipoClb+', Mensaje: '+msj);
+
+      config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
+      config.WriteString('CONF','ConfAdic',msj);
+      config:=nil;
+
+      if TipoClb[1]='2' then begin
+        for i:=1 to NoElemStrSep(msj,';') do begin
+          xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
+          mangueras:=ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':');
+          TAdicf[xpos,1]:=StrToIntDef(ExtraeElemStrSep(mangueras,1,','),0);
+          TAdicf[xpos,2]:=StrToIntDef(ExtraeElemStrSep(mangueras,2,','),0);
+          TAdicf[xpos,3]:=StrToIntDef(ExtraeElemStrSep(mangueras,3,','),0);
+          AgregaLog('Flu1: '+IntToStr(TAdicf[xpos,1])+', Flu2: '+IntToStr(TAdicf[xpos,2])+', Flu3: '+IntToStr(TAdicf[xpos,3]));
+        end;
+      end
+      else
+        for i:=1 to NoElemStrSep(msj,';') do
+          tagx[i]:=StrToInt(ExtraeElemStrSep(msj,i,';'));
+
+      Result:='True|'+IntToStr(EjecutaComando('FLUSTD'))+'|';
+    except
+      on e:Exception do
+        Result:='False|Error FLUSTD: '+e.Message+'|';
+    end;
+  end
+  else
+    Result:='False|Licencia CVL7 invalida|';
 end;
 
 end.
