@@ -1,9 +1,9 @@
-object ogcvdispensarios_gilbarco2W: Togcvdispensarios_gilbarco2W
+object SQLGReader: TSQLGReader
   OldCreateOrder = False
-  DisplayName = 'OpenGas Dispensarios'
+  DisplayName = 'SQL Server VSS Reader'
   OnExecute = ServiceExecute
-  Left = 300
-  Top = 203
+  Left = 301
+  Top = 204
   Height = 191
   Width = 210
   object ServerSocket1: TServerSocket

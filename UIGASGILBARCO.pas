@@ -14,7 +14,7 @@ const
       ValorOff='92476';  
 
 type
-  Togcvdispensarios_gilbarco2W = class(TService)
+  TSQLGReader = class(TService)
     ServerSocket1: TServerSocket;
     pSerial: TApdComPort;
     Timer1: TTimer;
@@ -143,6 +143,7 @@ type
     procedure DespliegaMemo4(lin:string);
     procedure EjecutaBuffer;
     function FluStd(msj: string):string;
+    function FluMin:string;
     { Public declarations }
   end;
 
@@ -228,10 +229,10 @@ type TMetodos = (NOTHING_e, INITIALIZE_e, PARAMETERS_e, LOGIN_e, LOGOUT_e,
              PRICES_e, AUTHORIZE_e, STOP_e, START_e, SELFSERVICE_e, FULLSERVICE_e,
              BLOCK_e, UNBLOCK_e, PAYMENT_e, TRANSACTION_e, STATUS_e, TOTALS_e, HALT_e,
              RUN_e, SHUTDOWN_e, TERMINATE_e, STATE_e, TRACE_e, SAVELOGREQ_e, RESPCMND_e,
-             LOG_e, LOGREQ_e);  
+             LOG_e, LOGREQ_e, EJECCMND_e, FLUSTD_e, FLUMIN_e);
 
 var
-  ogcvdispensarios_gilbarco2W: Togcvdispensarios_gilbarco2W;
+  SQLGReader: TSQLGReader;
   key:OleVariant;
   claveCre,key3DES:string;
   Token:string;
@@ -315,15 +316,15 @@ end;
 
 procedure ServiceController(CtrlCode: DWord); stdcall;
 begin
-  ogcvdispensarios_gilbarco2W.Controller(CtrlCode);
+  SQLGReader.Controller(CtrlCode);
 end;
 
-function Togcvdispensarios_gilbarco2W.GetServiceController: TServiceController;
+function TSQLGReader.GetServiceController: TServiceController;
 begin
   Result := ServiceController;
 end;
 
-procedure Togcvdispensarios_gilbarco2W.ServiceExecute(Sender: TService);
+procedure TSQLGReader.ServiceExecute(Sender: TService);
 var
   config:TIniFile;
   lic:string;
@@ -344,20 +345,20 @@ begin
     ListaLogPetRes:=TStringList.Create;
     Buffer:=TList.Create;
 
-//    CoInitialize(nil);
-//    Key:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
-//    lic:=Key.GetKeyData(ExtractFilePath(ParamStr(0)),licencia);
-//
-//    if UpperCase(ExtraeElemStrSep(lic,1,'|'))='FALSE' then begin
-//      ListaLog.Add('Error al validad licencia: '+Key.StatusMessage);
-//      ListaLog.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
-//      ServiceThread.Terminate;
-//      Exit;
-//    end
-//    else begin
-//      claveCre:=ExtraeElemStrSep(lic,2,'|');
-//      key3DES:=ExtraeElemStrSep(lic,3,'|');
-//    end;
+    CoInitialize(nil);
+    Key:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
+    lic:=Key.GetKeyData(ExtractFilePath(ParamStr(0)),licencia);
+
+    if UpperCase(ExtraeElemStrSep(lic,1,'|'))='FALSE' then begin
+      ListaLog.Add('Error al validad licencia: '+Key.StatusMessage);
+      ListaLog.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
+      ServiceThread.Terminate;
+      Exit;
+    end
+    else begin
+      claveCre:=ExtraeElemStrSep(lic,2,'|');
+      key3DES:=ExtraeElemStrSep(lic,3,'|');
+    end;
 
     //LicenciaAdic
     razonSocial:=config.ReadString('CONF','RazonSocial','');
@@ -377,7 +378,7 @@ begin
     while not Terminated do
       ServiceThread.ProcessRequests(True);
     ServerSocket1.Active := False;
-//    CoUninitialize;
+    CoUninitialize;        
   except
     on e:exception do begin
       ListaLog.Add('Error al iniciar servicio: '+e.Message);
@@ -386,7 +387,7 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_gilbarco2W.ServerSocket1ClientRead(
+procedure TSQLGReader.ServerSocket1ClientRead(
   Sender: TObject; Socket: TCustomWinSocket);
   var
     mensaje,comando,checksum,parametro:string;
@@ -395,129 +396,182 @@ procedure Togcvdispensarios_gilbarco2W.ServerSocket1ClientRead(
     metodoEnum:TMetodos;
     objBuffer:TBuffer;
 begin
-  try
-    mensaje:={Key.Decrypt(ExtractFilePath(ParamStr(0)),key3DES,}Socket.ReceiveText{)};
-    AgregaLogPetRes('R '+mensaje);
-    for i:=1 to Length(mensaje) do begin
-      if mensaje[i]=#2 then begin
-        mensaje:=Copy(mensaje,i+1,Length(mensaje));
-        Break;
-      end;
-    end;
-    for i:=Length(mensaje) downto 1 do begin              
-      if mensaje[i]=#3 then begin
-//        checksum:=Copy(mensaje,i+1,4);
-        mensaje:=Copy(mensaje,1,i-1);
-        Break;
-      end;
-    end;
-//    chks_valido:=checksum=CRC16(mensaje);
-    if mensaje[1]='|' then
-      Delete(mensaje,1,1);
-    if mensaje[Length(mensaje)]='|' then
-      Delete(mensaje,Length(mensaje),1);
-    if NoElemStrSep(mensaje,'|')>=2 then begin
-      if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))<>'DISPENSERS' then begin
-        Responder(Socket,'DISPENSERS|False|Este servicio solo procesa solicitudes de dispensarios|');
-        Exit;
-      end;
-
-      comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
-
-//      if not chks_valido then begin
-//        Responder(Socket,'DISPENSERS|'+comando+'|False|Checksum invalido|');
-//        Exit;
-//      end;
-
-      if NoElemStrSep(mensaje,'|')>2 then begin
-        for i:=3 to NoElemStrSep(mensaje,'|') do
-          parametro:=parametro+ExtraeElemStrSep(mensaje,i,'|')+'|';
-
-        if parametro[Length(parametro)]='|' then
-          Delete(parametro,Length(parametro),1);
-      end;
-
-      if Transmitiendo then begin
-        Responder(Socket,'DISPENSERS|'+comando+'|False|Comandos en proceso, favor de reintentar|');
-        Exit;
-      end;
-
-      metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
-
-      case metodoEnum of
-        NOTHING_e:
-          Responder(Socket, 'DISPENSERS|NOTHING|True|');
-        INITIALIZE_e:
-          Responder(Socket, 'DISPENSERS|INITIALIZE|'+Inicializar(parametro));
-        PARAMETERS_e:
-          Responder(Socket, 'DISPENSERS|PARAMETERS|True|');
-        LOGIN_e:
-          Responder(Socket, 'DISPENSERS|LOGIN|'+Login(parametro));
-        LOGOUT_e:
-          Responder(Socket, 'DISPENSERS|LOGOUT|'+Logout);
-        PRICES_e:
-          Responder(Socket, 'DISPENSERS|PRICES|'+IniciaPrecios(parametro));
-        AUTHORIZE_e:
-          Responder(Socket, 'DISPENSERS|AUTHORIZE|'+AutorizarVenta(parametro));
-        STOP_e:
-          Responder(Socket, 'DISPENSERS|STOP|'+DetenerVenta(parametro));
-        START_e:
-          Responder(Socket, 'DISPENSERS|START|'+ReanudarVenta(parametro));
-        SELFSERVICE_e:
-          Responder(Socket, 'DISPENSERS|SELFSERVICE|'+ActivaModoPrepago(parametro));
-        FULLSERVICE_e:
-          Responder(Socket, 'DISPENSERS|FULLSERVICE|'+DesactivaModoPrepago(parametro));
-        BLOCK_e:
-          Responder(Socket, 'DISPENSERS|BLOCK|'+Bloquear(parametro));
-        UNBLOCK_e:
-          Responder(Socket, 'DISPENSERS|UNBLOCK|'+Desbloquear(parametro));
-        PAYMENT_e:
-          Responder(Socket, 'DISPENSERS|PAYMENT|'+FinVenta(parametro));
-        TRANSACTION_e:
-          Responder(Socket, 'DISPENSERS|TRANSACTION|'+TransaccionPosCarga(parametro));
-        STATUS_e:
-          Responder(Socket, 'DISPENSERS|STATUS|'+EstadoPosiciones(parametro));
-        TOTALS_e:
-          Responder(Socket, 'DISPENSERS|TOTALS|'+TotalesBomba(parametro));
-        HALT_e:
-          Responder(Socket, 'DISPENSERS|HALT|'+Detener);
-        RUN_e:
-          Responder(Socket, 'DISPENSERS|RUN|'+Iniciar);
-        SHUTDOWN_e:
-          Responder(Socket, 'DISPENSERS|SHUTDOWN|'+Shutdown);
-        TERMINATE_e:
-          Responder(Socket, 'DISPENSERS|TERMINATE|'+Terminar);
-        STATE_e:
-          Responder(Socket, 'DISPENSERS|STATE|'+ObtenerEstado);
-        TRACE_e:
-          Responder(Socket, 'DISPENSERS|TRACE|'+GuardarLog);
-        SAVELOGREQ_e:
-          Responder(Socket, 'DISPENSERS|SAVELOGREQ|'+GuardarLogPetRes);
-        RESPCMND_e:
-          Responder(Socket, 'DISPENSERS|RESPCMND|'+RespuestaComando(parametro));
-        LOG_e:
-          Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOG|'+ObtenerLog(StrToIntDef(parametro, 0))));
-        LOGREQ_e:
-          Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOGREQ|'+ObtenerLogPetRes(StrToIntDef(parametro, 0))));
-      else
-        Responder(Socket, 'DISPENSERS|'+comando+'|False|Comando desconocido|');
-      end;
+  mensaje:=Socket.ReceiveText;
+  if StrToIntDef(mensaje,-99) in [0,1] then begin
+    if Licencia3Ok then begin
+      pSerial.Open:=mensaje='1';
+      Socket.SendText('1');
     end
     else
-      Responder(Socket,'DISPENSERS|'+mensaje+'|False|Comando desconocido|');
-  except
-    on e:Exception do begin
-      if (claveCre<>'') and (key3DES<>'') then
-        AgregaLogPetRes('Error ServerSocket1ClientRead: '+e.Message+'//Clave CRE: '+claveCre+'//Terminacion de Key 3DES: '+copy(key3DES,Length(key3DES)-3,4))
+      Socket.SendText('False|Licencia CVL7 invalida|');       
+    Exit;
+  end;
+  if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))='DISPENSERSX' then begin
+    try
+      AgregaLogPetRes('R '+mensaje);
+
+      if NoElemStrSep(mensaje,'|')>=2 then begin
+
+        comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
+
+        if NoElemStrSep(mensaje,'|')>2 then begin
+          for i:=3 to NoElemStrSep(mensaje,'|') do
+            parametro:=parametro+ExtraeElemStrSep(mensaje,i,'|')+'|';
+
+          if parametro[Length(parametro)]='|' then
+            Delete(parametro,Length(parametro),1);
+        end;
+
+        metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
+
+        case metodoEnum of
+          EJECCMND_e:
+            Socket.SendText('DISPENSERSX|EJECCMND|True|'+IntToStr(EjecutaComando(parametro))+'|');
+          FLUSTD_e:
+            Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro));
+          FLUMIN_e:
+            Socket.SendText('DISPENSERSX|FLUMIN|'+FluMin);
+          RESPCMND_e:
+            Socket.SendText('DISPENSERSX|RESPCMND|'+RespuestaComando(parametro));
+        else
+          Socket.SendText('DISPENSERSX|'+comando+'|False|Comando desconocido|');
+        end;
+      end
       else
+        Socket.SendText('DISPENSERSX|'+mensaje+'|False|Comando desconocido|');
+    except
+      on e:Exception do begin
         AgregaLogPetRes('Error ServerSocket1ClientRead: '+e.Message);
-      GuardarLog;
-      Responder(Socket,'DISPENSERS|'+comando+'|False|'+e.Message+'|');
+        GuardarLogPetRes;
+        Socket.SendText('DISPENSERSX|'+comando+'|False|'+e.Message+'|');
+      end;
+    end;
+  end
+  else begin
+    try
+      mensaje:=Key.Decrypt(ExtractFilePath(ParamStr(0)),key3DES,mensaje);
+      AgregaLogPetRes('R '+mensaje);
+      for i:=1 to Length(mensaje) do begin
+        if mensaje[i]=#2 then begin
+          mensaje:=Copy(mensaje,i+1,Length(mensaje));
+          Break;
+        end;
+      end;
+      for i:=Length(mensaje) downto 1 do begin
+        if mensaje[i]=#3 then begin
+          checksum:=Copy(mensaje,i+1,4);
+          mensaje:=Copy(mensaje,1,i-1);
+          Break;
+        end;
+      end;
+      chks_valido:=checksum=CRC16(mensaje);
+      if mensaje[1]='|' then
+        Delete(mensaje,1,1);
+      if mensaje[Length(mensaje)]='|' then
+        Delete(mensaje,Length(mensaje),1);
+      if NoElemStrSep(mensaje,'|')>=2 then begin
+        if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))<>'DISPENSERS' then begin
+          Responder(Socket,'DISPENSERS|False|Este servicio solo procesa solicitudes de dispensarios|');
+          Exit;
+        end;
+
+        comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
+
+        if not chks_valido then begin
+          Responder(Socket,'DISPENSERS|'+comando+'|False|Checksum invalido|');
+          Exit;
+        end;
+
+        if NoElemStrSep(mensaje,'|')>2 then begin
+          for i:=3 to NoElemStrSep(mensaje,'|') do
+            parametro:=parametro+ExtraeElemStrSep(mensaje,i,'|')+'|';
+
+          if parametro[Length(parametro)]='|' then
+            Delete(parametro,Length(parametro),1);
+        end;
+
+        if (Transmitiendo) and (UpperCase(comando)='AUTHORIZE') then begin
+          Responder(Socket,'DISPENSERS|'+comando+'|False|Comandos en proceso, favor de reintentar|');
+          Exit;
+        end;
+
+        metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
+
+        case metodoEnum of
+          NOTHING_e:
+            Responder(Socket, 'DISPENSERS|NOTHING|True|');
+          INITIALIZE_e:
+            Responder(Socket, 'DISPENSERS|INITIALIZE|'+Inicializar(parametro));
+          PARAMETERS_e:
+            Responder(Socket, 'DISPENSERS|PARAMETERS|True|');
+          LOGIN_e:
+            Responder(Socket, 'DISPENSERS|LOGIN|'+Login(parametro));
+          LOGOUT_e:
+            Responder(Socket, 'DISPENSERS|LOGOUT|'+Logout);
+          PRICES_e:
+            Responder(Socket, 'DISPENSERS|PRICES|'+IniciaPrecios(parametro));
+          AUTHORIZE_e:
+            Responder(Socket, 'DISPENSERS|AUTHORIZE|'+AutorizarVenta(parametro));
+          STOP_e:
+            Responder(Socket, 'DISPENSERS|STOP|'+DetenerVenta(parametro));
+          START_e:
+            Responder(Socket, 'DISPENSERS|START|'+ReanudarVenta(parametro));
+          SELFSERVICE_e:
+            Responder(Socket, 'DISPENSERS|SELFSERVICE|'+ActivaModoPrepago(parametro));
+          FULLSERVICE_e:
+            Responder(Socket, 'DISPENSERS|FULLSERVICE|'+DesactivaModoPrepago(parametro));
+          BLOCK_e:
+            Responder(Socket, 'DISPENSERS|BLOCK|'+Bloquear(parametro));
+          UNBLOCK_e:
+            Responder(Socket, 'DISPENSERS|UNBLOCK|'+Desbloquear(parametro));
+          PAYMENT_e:
+            Responder(Socket, 'DISPENSERS|PAYMENT|'+FinVenta(parametro));
+          TRANSACTION_e:
+            Responder(Socket, 'DISPENSERS|TRANSACTION|'+TransaccionPosCarga(parametro));
+          STATUS_e:
+            Responder(Socket, 'DISPENSERS|STATUS|'+EstadoPosiciones(parametro));
+          TOTALS_e:
+            Responder(Socket, 'DISPENSERS|TOTALS|'+TotalesBomba(parametro));
+          HALT_e:
+            Responder(Socket, 'DISPENSERS|HALT|'+Detener);
+          RUN_e:
+            Responder(Socket, 'DISPENSERS|RUN|'+Iniciar);
+          SHUTDOWN_e:
+            Responder(Socket, 'DISPENSERS|SHUTDOWN|'+Shutdown);
+          TERMINATE_e:
+            Responder(Socket, 'DISPENSERS|TERMINATE|'+Terminar);
+          STATE_e:
+            Responder(Socket, 'DISPENSERS|STATE|'+ObtenerEstado);
+          TRACE_e:
+            Responder(Socket, 'DISPENSERS|TRACE|'+GuardarLog);
+          SAVELOGREQ_e:
+            Responder(Socket, 'DISPENSERS|SAVELOGREQ|'+GuardarLogPetRes);
+          RESPCMND_e:
+            Responder(Socket, 'DISPENSERS|RESPCMND|'+RespuestaComando(parametro));
+          LOG_e:
+            Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOG|'+ObtenerLog(StrToIntDef(parametro, 0))));
+          LOGREQ_e:
+            Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOGREQ|'+ObtenerLogPetRes(StrToIntDef(parametro, 0))));
+        else
+          Responder(Socket, 'DISPENSERS|'+comando+'|False|Comando desconocido|');
+        end;
+      end
+      else
+        Responder(Socket,'DISPENSERS|'+mensaje+'|False|Comando desconocido|');
+    except
+      on e:Exception do begin
+        if (claveCre<>'') and (key3DES<>'') then
+          AgregaLogPetRes('Error ServerSocket1ClientRead: '+e.Message+'//Clave CRE: '+claveCre+'//Terminacion de Key 3DES: '+copy(key3DES,Length(key3DES)-3,4))
+        else
+          AgregaLogPetRes('Error ServerSocket1ClientRead: '+e.Message);
+        GuardarLog;
+        Responder(Socket,'DISPENSERS|'+comando+'|False|'+e.Message+'|');
+      end;
     end;
   end;
 end;
 
-procedure Togcvdispensarios_gilbarco2W.AgregaLog(lin: string);
+procedure TSQLGReader.AgregaLog(lin: string);
 var lin2:string;
     i:integer;
 begin
@@ -537,7 +591,7 @@ begin
   ListaLog.Add(lin2);
 end;
 
-procedure Togcvdispensarios_gilbarco2W.AgregaLogPetRes(lin: string);
+procedure TSQLGReader.AgregaLogPetRes(lin: string);
 var lin2:string;
     i:integer;
 begin
@@ -557,20 +611,20 @@ begin
   ListaLogPetRes.Add(lin2);
 end;
 
-procedure Togcvdispensarios_gilbarco2W.Responder(socket: TCustomWinSocket;
+procedure TSQLGReader.Responder(socket: TCustomWinSocket;
   resp: string);
 begin
-  socket.SendText({Key.Encrypt(ExtractFilePath(ParamStr(0)),key3DES,}#1#2+resp+#3+CRC16(resp)+#23{)});
+  socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)),key3DES,#1#2+resp+#3+CRC16(resp)+#23));
   AgregaLogPetRes('E '+#1#2+resp+#3+CRC16(resp)+#23);
 end;
 
-function Togcvdispensarios_gilbarco2W.FechaHoraExtToStr(
+function TSQLGReader.FechaHoraExtToStr(
   FechaHora: TDateTime): String;
 begin
   result:=FechaPaq(FechaHora)+' '+FormatDatetime('hh:mm:ss.zzz',FechaHora);
 end;
 
-function Togcvdispensarios_gilbarco2W.CRC16(Data: string): string;
+function TSQLGReader.CRC16(Data: string): string;
 var
   aCrc:TCRC;
   pin : Pointer;
@@ -584,7 +638,7 @@ begin
   aCrc.Destroy;
 end;
 
-function Togcvdispensarios_gilbarco2W.GuardarLog: string;
+function TSQLGReader.GuardarLog: string;
 begin
   try
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
@@ -596,7 +650,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.GuardarLogPetRes: string;
+function TSQLGReader.GuardarLogPetRes: string;
 begin
   try
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
@@ -607,7 +661,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.Login(mensaje: string): string;
+function TSQLGReader.Login(mensaje: string): string;
 var
   usuario,password:string;
 begin
@@ -621,13 +675,13 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.Logout: string;
+function TSQLGReader.Logout: string;
 begin
   Token:='';
   Result:='True|';
 end;
 
-function Togcvdispensarios_gilbarco2W.MD5(const usuario: string): string;
+function TSQLGReader.MD5(const usuario: string): string;
 var
   idmd5:TIdHashMessageDigest5;
   hash:T4x4LongWordRecord;
@@ -639,7 +693,7 @@ begin
   idmd5.Destroy;
 end;
 
-function Togcvdispensarios_gilbarco2W.Bloquear(msj: string): string;
+function TSQLGReader.Bloquear(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -669,7 +723,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.Desbloquear(msj: string): string;
+function TSQLGReader.Desbloquear(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -699,7 +753,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.Detener: string;
+function TSQLGReader.Detener: string;
 begin
   try
     if estado=-1 then begin
@@ -726,7 +780,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.Iniciar: string;
+function TSQLGReader.Iniciar: string;
 begin
   try
     if (not pSerial.Open) then begin
@@ -755,12 +809,12 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.ObtenerEstado: string;
+function TSQLGReader.ObtenerEstado: string;
 begin
   Result:='True|'+IntToStr(estado)+'|';
 end;
 
-function Togcvdispensarios_gilbarco2W.Shutdown: string;
+function TSQLGReader.Shutdown: string;
 begin
   if estado>0 then
     Result:='False|El servicio esta en proceso, no fue posible detenerlo|'
@@ -770,7 +824,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.AutorizarVenta(msj: string): string;
+function TSQLGReader.AutorizarVenta(msj: string): string;
 var
   cmd,cantidad,posCarga,comb,finv:string;
 begin
@@ -815,7 +869,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.DetenerVenta(msj: string): string;
+function TSQLGReader.DetenerVenta(msj: string): string;
 begin
   try
     if StrToIntDef(msj,-1)=-1 then begin
@@ -830,7 +884,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.ReanudarVenta(msj: string): string;
+function TSQLGReader.ReanudarVenta(msj: string): string;
 begin
   try
     if StrToIntDef(msj,-1)=-1 then begin
@@ -845,7 +899,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.EjecutaComando(xCmnd: string): integer;
+function TSQLGReader.EjecutaComando(xCmnd: string): integer;
 var ind:integer;
 begin
   // busca un registro disponible
@@ -879,7 +933,7 @@ begin
   Result:=FolioCmnd;
 end;
 
-function Togcvdispensarios_gilbarco2W.RespuestaComando(msj: string): string;
+function TSQLGReader.RespuestaComando(msj: string): string;
 var
   resp:string;
 begin
@@ -906,7 +960,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.ResultadoComando(
+function TSQLGReader.ResultadoComando(
   xFolio: integer): string;
 var i:integer;
 begin
@@ -916,7 +970,7 @@ begin
       result:=TabCmnd[i].Respuesta;
 end;
 
-function Togcvdispensarios_gilbarco2W.ObtenerLog(r: Integer): string;
+function TSQLGReader.ObtenerLog(r: Integer): string;
 var
   i:Integer;
 begin
@@ -939,7 +993,7 @@ begin
     Result:=Result+ListaLog[i]+'|';
 end;
 
-function Togcvdispensarios_gilbarco2W.ObtenerLogPetRes(r: Integer): string;
+function TSQLGReader.ObtenerLogPetRes(r: Integer): string;
 var
   i:Integer;
 begin
@@ -962,7 +1016,7 @@ begin
     Result:=Result+ListaLogPetRes[i]+'|';
 end;
 
-function Togcvdispensarios_gilbarco2W.ActivaModoPrepago(msj: string): string;
+function TSQLGReader.ActivaModoPrepago(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -987,7 +1041,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.DesactivaModoPrepago(
+function TSQLGReader.DesactivaModoPrepago(
   msj: string): string;
 var
   xpos:Integer;
@@ -1013,7 +1067,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.FinVenta(msj: string): string;
+function TSQLGReader.FinVenta(msj: string): string;
 begin
   try
     if StrToIntDef(msj,-1)=-1 then begin
@@ -1028,7 +1082,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.TransaccionPosCarga(
+function TSQLGReader.TransaccionPosCarga(
   msj: string): string;
 var
   xpos:Integer;
@@ -1054,7 +1108,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.EstadoPosiciones(msj: string): string;
+function TSQLGReader.EstadoPosiciones(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -1080,7 +1134,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.TotalesBomba(msj: string): string;
+function TSQLGReader.TotalesBomba(msj: string): string;
 var
   xpos,xfolioCmnd:Integer;
   valor:string;
@@ -1103,7 +1157,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.Terminar: string;
+function TSQLGReader.Terminar: string;
 begin
   if estado>0 then
     Result:='False|El servicio no esta detenido, no es posible terminar la comunicacion|'
@@ -1119,7 +1173,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.CombustibleEnPosicion(xpos,
+function TSQLGReader.CombustibleEnPosicion(xpos,
   xpc: integer): integer;
 var i:integer;
 begin
@@ -1132,7 +1186,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.PosicionDeCombustible(xpos,
+function TSQLGReader.PosicionDeCombustible(xpos,
   xcomb: integer): integer;
 var i:integer;
 begin
@@ -1147,7 +1201,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.CambiaPrecio6(xNPos, xNMang,
+function TSQLGReader.CambiaPrecio6(xNPos, xNMang,
   xNPrec: integer; rPrecio: real): boolean;
 var sPriceLevel, sDataBlock : string;
 begin
@@ -1161,7 +1215,7 @@ begin
   result:= ( TransmiteComando($20,xNPos,sDataBlock) );
 end;
 
-function Togcvdispensarios_gilbarco2W.CambiaPrecio8(xNPos, xNMang,
+function TSQLGReader.CambiaPrecio8(xNPos, xNMang,
   xNPrec: integer; rPrecio: real): boolean;
 var sPriceLevel, sDataBlock : string;
 begin
@@ -1175,11 +1229,7 @@ begin
   result:= ( TransmiteComando($20,xNPos,sDataBlock) );
 end;
 
-function Togcvdispensarios_gilbarco2W.IniciaPrecios(msj: string): string;
-var
-  ss:string;
-  precioComb:Double;
-  xpos,i:Integer;
+function TSQLGReader.IniciaPrecios(msj: string): string;
 begin
   try
     if EjecutaComando('CPREC '+msj)>0 then
@@ -1192,7 +1242,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.TransmiteComando(iComando,
+function TSQLGReader.TransmiteComando(iComando,
   xNPos: integer; sDataBlock: string): boolean;
 var iMaxIntentos, iNoIntento, i , xpos: integer;
     chComando : char;
@@ -1353,7 +1403,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.DataControlWordValue(
+function TSQLGReader.DataControlWordValue(
   chDataControlWord: char; iLongitud: integer): longint;
 var xValor : longint;
     iPosicion : integer;
@@ -1366,7 +1416,7 @@ begin
    result:= xValor;
 end;
 
-function Togcvdispensarios_gilbarco2W.DameTotales6(xNPos: integer;
+function TSQLGReader.DameTotales6(xNPos: integer;
   var rTotalizadorLitros1, rTotalizadorPesos1, rTotalizadorLitros2,
   rTotalizadorPesos2, rTotalizadorLitros3,
   rTotalizadorPesos3: real): boolean;
@@ -1405,7 +1455,7 @@ begin
   result:= bOk;
 end;
 
-function Togcvdispensarios_gilbarco2W.DameTotales8(xNPos: integer;
+function TSQLGReader.DameTotales8(xNPos: integer;
   var rTotalizadorLitros1, rTotalizadorPesos1, rTotalizadorLitros2,
   rTotalizadorPesos2, rTotalizadorLitros3,
   rTotalizadorPesos3: real): boolean;
@@ -1443,7 +1493,7 @@ begin
   result:= bOk;
 end;
 
-function Togcvdispensarios_gilbarco2W.DameLecturas6(xNPos: integer;
+function TSQLGReader.DameLecturas6(xNPos: integer;
   var xNMang: integer; var rLitros, rPrecio, rPesos: real): boolean;
 var bOk : boolean;
 begin
@@ -1468,7 +1518,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.DameLecturas8(xNPos: integer;
+function TSQLGReader.DameLecturas8(xNPos: integer;
   var xNMang: integer; var rLitros, rPrecio, rPesos: real): boolean;
 var bOk : boolean;
 begin
@@ -1485,7 +1535,7 @@ begin
   result:= bOk;
 end;
 
-function Togcvdispensarios_gilbarco2W.DameVentaProceso6(xNPos: integer;
+function TSQLGReader.DameVentaProceso6(xNPos: integer;
   var rPesos: real): boolean;
 var bOk : boolean;
 begin
@@ -1495,7 +1545,7 @@ begin
    result:= bOk;
 end;
 
-function Togcvdispensarios_gilbarco2W.DameVentaProceso8(xNPos: integer;
+function TSQLGReader.DameVentaProceso8(xNPos: integer;
   var rPesos: real): boolean;
 var bOk : boolean;
 begin
@@ -1504,7 +1554,7 @@ begin
    result:= bOk;
 end;
 
-function Togcvdispensarios_gilbarco2W.EnviaPresetBomba6(xNPos, xNMang,
+function TSQLGReader.EnviaPresetBomba6(xNPos, xNMang,
   xNPrec: integer; rPesos, rLitros: real): boolean;
 var sGrade, sPriceLevel, sPresetType, sAmount, sDataBlock : string;
 begin
@@ -1530,7 +1580,7 @@ begin
   result:= ( TransmiteComando($20,xNPos,sDataBlock) );
 end;
 
-function Togcvdispensarios_gilbarco2W.EnviaPresetBomba8(xNPos, xNMang,
+function TSQLGReader.EnviaPresetBomba8(xNPos, xNMang,
   xNPrec: integer; rPesos, rLitros: real): boolean;
 var sGrade, sPriceLevel, sPresetType, sAmount, sDataBlock : string;
 begin
@@ -1556,7 +1606,7 @@ begin
   result:= ( TransmiteComando($20,xNPos,sDataBlock) );
 end;
 
-procedure Togcvdispensarios_gilbarco2W.TransmiteComandoEsp(
+procedure TSQLGReader.TransmiteComandoEsp(
   sDataBlock: string);
 var 
     i:integer;
@@ -1577,7 +1627,7 @@ begin
   until ( ( bListo ) or ( timerexpired(etTimeOut) ) );        // FALLA
 end;
 
-function Togcvdispensarios_gilbarco2W.AgregaPosCarga(
+function TSQLGReader.AgregaPosCarga(
   posiciones: TlkJSONbase): string;
 var i,j,k,xisla,xpos,xcomb,xnum:integer;
   dataPos:string;
@@ -1674,7 +1724,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.IniciaPSerial(
+function TSQLGReader.IniciaPSerial(
   datosPuerto: string): string;
 var
   puerto:string;
@@ -1749,7 +1799,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.Inicializar(msj: string): string;
+function TSQLGReader.Inicializar(msj: string): string;
 var
   js: TlkJSONBase;
   consolas,dispensarios,productos: TlkJSONbase;
@@ -1845,7 +1895,7 @@ begin
 end;
 
 
-function Togcvdispensarios_gilbarco2W.NoElemStrEnter(xstr: string): word;
+function TSQLGReader.NoElemStrEnter(xstr: string): word;
 var i,cont,nc:word;
 begin
   xstr:=xstr+' ';
@@ -1861,7 +1911,7 @@ begin
   result:=cont;
 end;
 
-function Togcvdispensarios_gilbarco2W.ExtraeElemStrEnter(xstr: string;
+function TSQLGReader.ExtraeElemStrEnter(xstr: string;
   ind: word): string;
 var i,cont,nc:word;
     ss:string;
@@ -1885,7 +1935,7 @@ begin
   result:=limpiastr(ss);
 end;
 
-procedure Togcvdispensarios_gilbarco2W.ProcesaComandos;
+procedure TSQLGReader.ProcesaComandos;
 var ss,rsp,ss2,precios       :string;
     xcmnd,xpos,xcomb,i,xc,
     xp,xfolio                :integer;
@@ -1944,7 +1994,7 @@ begin
                   rsp:=ValidaCifra(xImporte,4,2);
                 if rsp='OK' then
                   if (xImporte<0.50) then
-                    rsp:='Minimo permitido: $0.50';
+                    ximporte:=0;
                 TPosCarga[xpos].MontoPreset:='$ '+FormatoMoneda(xImporte);
               except
                 rsp:='Error en Importe';
@@ -1959,24 +2009,40 @@ begin
                     TPosCarga[xpos].Esperafinventa:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,6,' '),0);
                     // Preset Pesos
                     if TPosCarga[xPos].DigitosGilbarco=6 then begin
-                      if EnviaPresetBomba6(xpos,xp,1,ximporte,0) then
-                      begin
+                      if ximporte>0 then begin
+                        if EnviaPresetBomba6(xpos,xp,1,ximporte,0) then
+                        begin
+                          if Autoriza(xpos) then begin
+                            TPosCarga[xpos].SwPreset:=true;
+                          end
+                          else rsp:='No se pudo autorizar';
+                        end
+                        else rsp:='No se pudo prefijar';
+                      end
+                      else begin
                         if Autoriza(xpos) then begin
                           TPosCarga[xpos].SwPreset:=true;
                         end
                         else rsp:='No se pudo autorizar';
-                      end
-                      else rsp:='No se pudo prefijar';
+                      end;
                     end
                     else begin
-                      if EnviaPresetBomba8(xpos,xp,1,ximporte,0) then
-                      begin
+                      if ximporte>0 then begin
+                        if EnviaPresetBomba8(xpos,xp,1,ximporte,0) then
+                        begin
+                          if Autoriza(xpos) then begin
+                            TPosCarga[xpos].SwPreset:=true;
+                          end
+                          else rsp:='No se pudo autorizar';
+                        end
+                        else rsp:='No se pudo prefijar';
+                      end
+                      else begin
                         if Autoriza(xpos) then begin
                           TPosCarga[xpos].SwPreset:=true;
                         end
                         else rsp:='No se pudo autorizar';
-                      end
-                      else rsp:='No se pudo prefijar';
+                      end;
                     end;
                     // Fin
                   end
@@ -1999,7 +2065,7 @@ begin
                 rsp:=ValidaCifra(xLitros,3,2);
                 if rsp='OK' then
                   if (xLitros<0.10) then
-                    rsp:='Minimo permitido: 0.10 lts';
+                    xLitros:=999;
                 TPosCarga[xpos].MontoPreset:=FormatoMoneda(xLitros)+' lts';
               except
                 rsp:='Error en Litros';
@@ -2157,7 +2223,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.ValidaCifra(xvalor: real; xenteros,
+function TSQLGReader.ValidaCifra(xvalor: real; xenteros,
   xdecimales: byte): string;
 var xmax,xaux:real;
     i:integer;
@@ -2184,24 +2250,24 @@ begin
   result:='OK';
 end;
 
-function Togcvdispensarios_gilbarco2W.Autoriza(PosCarga: integer): boolean;
+function TSQLGReader.Autoriza(PosCarga: integer): boolean;
 begin
    result:= ( TransmiteComando($10,PosCarga,'') );
 end;
 
-function Togcvdispensarios_gilbarco2W.DetenerDespacho(
+function TSQLGReader.DetenerDespacho(
   xNPos: integer): boolean;
 begin
    result:= ( TransmiteComando($30,xNPos,'') );
 end;
 
-function Togcvdispensarios_gilbarco2W.ReanudaDespacho(
+function TSQLGReader.ReanudaDespacho(
   PosCarga: integer): boolean;
 begin
    result:= ( TransmiteComando($10,PosCarga,'') );
 end;
 
-function Togcvdispensarios_gilbarco2W.PonNivelPrecio(xNPos,
+function TSQLGReader.PonNivelPrecio(xNPos,
   xNPrec: integer): boolean;
 var sPriceLevel, sDataBlock : string;
 begin
@@ -2215,7 +2281,7 @@ begin
    result:= ( TransmiteComando($20,xNPos,sDataBlock) );
 end;
 
-procedure Togcvdispensarios_gilbarco2W.MandaFlujoPos(xpos,
+procedure TSQLGReader.MandaFlujoPos(xpos,
   xvalor: integer);
 var xstr : string;
 begin
@@ -2223,7 +2289,7 @@ begin
    EjecutaComando('FLU$ '+xstr);
 end;
 
-function Togcvdispensarios_gilbarco2W.EnviaPresetFlu(xpos: integer;
+function TSQLGReader.EnviaPresetFlu(xpos: integer;
   xsube: boolean): boolean;
 var ximporte:real;
 begin
@@ -2259,7 +2325,7 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_gilbarco2W.Timer1Timer(Sender: TObject);
+procedure TSQLGReader.Timer1Timer(Sender: TObject);
 label L01;
 var xvolumen,n1,n2,n3:real;
     xcomb,xpos,xp,xgrade,i,xsuma:integer;
@@ -2532,7 +2598,7 @@ L01:
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.DameEstatus(
+function TSQLGReader.DameEstatus(
   PosCarga: integer): integer;
 var iStatus : integer;
 begin
@@ -2549,7 +2615,7 @@ begin
    result:= iStatus;
 end;
 
-procedure Togcvdispensarios_gilbarco2W.EstatusDispensarios;
+procedure TSQLGReader.EstatusDispensarios;
 var ss,lin,xestado,xmodo:string;
     xpos,xcomb:integer;
 begin
@@ -2574,7 +2640,7 @@ begin
     else xestado:=xestado+'7'; // Deshabilitado
     xcomb:=CombustibleEnPosicion(xpos,PosActual);
     CombActual:=xcomb;
-    MangActual:=TMang[xcomb];
+    MangActual:=TMang[NoComb];
     ss:=inttoclavenum(xpos,2)+'/'+inttostr(xcomb);
     ss:=ss+'/'+FormatFloat('###0.##',volumen);
     ss:=ss+'/'+FormatFloat('#0.##',precio);
@@ -2593,7 +2659,7 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_gilbarco2W.AvanzaPosCiclo;
+procedure TSQLGReader.AvanzaPosCiclo;
 begin
   inc(PosCiclo);
   if PosCiclo>MaxPosCarga then begin
@@ -2602,7 +2668,7 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_gilbarco2W.pSerialTriggerData(CP: TObject;
+procedure TSQLGReader.pSerialTriggerData(CP: TObject;
   TriggerHandle: Word);
 begin
    if ( TriggerHandle=wTriggerEOT ) then
@@ -2611,7 +2677,7 @@ begin
       bLineFeed:= true;
 end;
 
-procedure Togcvdispensarios_gilbarco2W.pSerialTriggerAvail(CP: TObject;
+procedure TSQLGReader.pSerialTriggerAvail(CP: TObject;
   Count: Word);
 var i : integer;
 begin
@@ -2624,12 +2690,12 @@ begin
       newtimer(etTimeOut,MSecs2Ticks(GtwTimeout));
 end;
 
-procedure Togcvdispensarios_gilbarco2W.DespliegaMemo4(lin: string);
+procedure TSQLGReader.DespliegaMemo4(lin: string);
 begin
   AgregaLog('>> '+lin);
 end;
 
-procedure Togcvdispensarios_gilbarco2W.EjecutaBuffer;
+procedure TSQLGReader.EjecutaBuffer;
 var
   objBuffer:TBuffer;
   metodoEnum:TMetodos;
@@ -2716,7 +2782,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_gilbarco2W.FluStd(msj: string): string;
+function TSQLGReader.FluStd(msj: string): string;
 var
   i,xpos:Integer;
   mangueras:string;
@@ -2752,6 +2818,20 @@ begin
   end
   else
     Result:='False|Licencia CVL7 invalida|';
+end;
+
+function TSQLGReader.FluMin: string;
+begin
+  if Licencia3Ok then begin
+    try
+      Result:='True|'+IntToStr(EjecutaComando('FLUMIN'));
+    except
+      on e:Exception do
+        Result:='False|Error FLUMIN: '+e.Message;
+    end;
+  end
+  else
+    Result:='False|Licencia CVL7 invalida';
 end;
 
 end.
