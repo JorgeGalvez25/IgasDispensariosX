@@ -34,6 +34,7 @@ type
     ContEsperaPaso3,
     NumPaso,
     PosicionActual:integer;
+    SoportaSeleccionProducto:string;
     UltimoStatus:string;
     SnPosCarga:integer;
     SnImporte,SnLitros:real;
@@ -84,7 +85,7 @@ type
     function ResultadoComando(xFolio:integer):string;
     function ValidaCifra(xvalor:real;xenteros,xdecimales:byte):string;
     function PosicionDeCombustible(xpos,xcomb:integer):integer;
-    function Inicializar(json:string): string;
+    function Inicializar(msj:string): string;
     function Parametros(json:string): string;
     function Login(mensaje:string): string;
     function Logout: string;
@@ -114,6 +115,8 @@ type
     function Terminar:string;
     procedure GuardaLogComandos;
     procedure ProcesaFlujo(xpos:integer;swarriba:boolean);
+    function NoElemStrEnter(xstr:string):word;
+    function ExtraeElemStrEnter(xstr:string;ind:word):string;
     { Public declarations }
   end;
 
@@ -308,7 +311,7 @@ begin
     while not Terminated do
       ServiceThread.ProcessRequests(True);
     ServerSocket1.Active := False;
-    CoUninitialize;
+//    CoUninitialize;
   except
     on e:exception do begin
       ListaLog.Add('Error al iniciar servicio: '+e.Message);
@@ -611,35 +614,12 @@ begin
 end;
 
 function TSQLBReader.IniciaPrecios(msj: string): string;
-var
-  ss:string;
-  precioComb:Double;
-  xpos,i:Integer;
 begin
   try
-    for xpos:=1 to MaxPosCargaActiva do begin
-      with TPosCarga[xpos] do if xpos<=MaximoDePosiciones then begin
-        for i:=1 to NoComb do begin
-          precioComb:=StrToFloatDef(ExtraeElemStrSep(msj,TComb[i],'|'),-1);
-          if precioComb=-1 then begin
-            Result:='False|El precio '+IntToStr(i)+' es incorrecto|';
-            Exit;
-          end;
-          if precioComb<=0 then
-            Continue;
-          LPrecios[TComb[i]]:=precioComb;
-          // precio contado
-          ss:='U'+IntToClaveNum(xpos,2)+NivelPrecioContado+IntToStr(TPos[i])+FiltraStrNum(FormatoNumeroSinComas(precioComb,5,2));
-          ComandoConsolaBuff(ss,false);
-          esperamiliseg(100);
-          // precio credito
-          ss:='U'+IntToClaveNum(xpos,2)+NivelPrecioCredito+IntToStr(TPos[i])+FiltraStrNum(FormatoNumeroSinComas(precioComb,5,2));
-          ComandoConsolaBuff(ss,false);
-          esperamiliseg(100);
-        end;
-      end;
-    end;
-    Result:='True|';
+    if EjecutaComando('CPREC '+msj)>0 then
+      Result:='True|'
+    else
+      Result:='False|No fue posible aplicar comando de cambio de precios|';
   except
     on e:Exception do
       Result:='False|Excepcion: '+e.Message+'|';
@@ -830,7 +810,7 @@ label uno;
 var lin,ss,ss2,rsp,rsp2,
     descrsp,xestado,xmodo,
     xdisp2,xmodo2,xestado2,
-    sslin           :string;
+    sslin, precios    :string;
     simp,spre,sval  :string[20];
     claveCmnd:Integer;
     k:Integer;
@@ -838,6 +818,7 @@ var lin,ss,ss2,rsp,rsp2,
     XMANG,XCTE,XVEHI,
     xp,xpr,xcomb,xfolio:integer;
     xLista:TStrings;
+    precioComb,
     ximporte,
     ximpo,xdif,
     xprecio,xvol,
@@ -1564,6 +1545,29 @@ begin
               TabProtec[j]:=strtointdef(ExtraeElemStrSep(BennettProtec,j,';'),0);
           end;
         end
+        else if (ss='CPREC') then begin
+          precios:=ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,2,' ');
+          for xpos:=1 to MaxPosCargaActiva do begin
+            with TPosCarga[xpos] do if xpos<=MaximoDePosiciones then begin
+              for i:=1 to NoComb do begin
+                precioComb:=StrToFloatDef(ExtraeElemStrSep(precios,TComb[i],'|'),-1);
+                if precioComb=-1 then
+                  rsp:='False|El precio '+IntToStr(i)+' es incorrecto|';
+                if precioComb<=0 then
+                  Continue;
+                LPrecios[TComb[i]]:=precioComb;
+                // precio contado
+                ss:='U'+IntToClaveNum(xpos,2)+NivelPrecioContado+IntToStr(TPos[i])+FiltraStrNum(FormatoNumeroSinComas(precioComb,5,2));
+                ComandoConsolaBuff(ss,false);
+                esperamiliseg(100);
+                // precio credito
+                ss:='U'+IntToClaveNum(xpos,2)+NivelPrecioCredito+IntToStr(TPos[i])+FiltraStrNum(FormatoNumeroSinComas(precioComb,5,2));
+                ComandoConsolaBuff(ss,false);
+                esperamiliseg(100);
+              end;
+            end;
+          end;
+        end
         else rsp:='Comando no Soportado o no Existe';
 
         if SwAplicaCmnd then begin
@@ -1609,7 +1613,7 @@ begin
 
   ss:='S'+IntToClaveNum(xpos,2); // Autorizar
   
-  if (xcomb>0) and (SnImporte<>9999) then with TPosCarga[xpos] do begin
+  if (SoportaSeleccionProducto='Si') and (xcomb>0) and (SnImporte<>9999) then with TPosCarga[xpos] do begin
     xp:=0;
     for xc:=1 to NoComb do
       if TComb[xc]=xcomb then
@@ -2203,12 +2207,12 @@ begin
   end;
 end;
 
-function TSQLBReader.Inicializar(json: string): string;
+function TSQLBReader.Inicializar(msj: string): string;
 var
   js: TlkJSONBase;
   consolas,dispensarios,productos: TlkJSONbase;
   i,productID: Integer;
-  datosPuerto:string;
+  datosPuerto, variables, variable:string;
 begin
   try
     if estado>-1 then begin
@@ -2216,7 +2220,16 @@ begin
       Exit;
     end;
 
-    js := TlkJSON.ParseText(ExtraeElemStrSep(json,1,'|'));
+    js := TlkJSON.ParseText(ExtraeElemStrSep(msj,1,'|'));
+    variables:=ExtraeElemStrSep(msj,2,'|');
+
+    SoportaSeleccionProducto:='Si';
+    for i:=1 to NoElemStrEnter(variables) do begin
+      variable:=ExtraeElemStrEnter(variables,i);
+      if UpperCase(ExtraeElemStrSep(variable,1,'='))='SOPORTASELECCIONPRODUCTO' then
+        SoportaSeleccionProducto:=ExtraeElemStrSep(variable,2,'=')
+    end;
+
     consolas := js.Field['Consoles'];
 
     datosPuerto:=VarToStr(consolas.Child[0].Field['Connection'].Value);
@@ -2464,6 +2477,45 @@ begin
       end;
     end;
   end;
+end;
+
+function TSQLBReader.ExtraeElemStrEnter(xstr: string; ind: word): string;
+var i,cont,nc:word;
+    ss:string;
+begin
+  xstr:=xstr+' ';
+  cont:=1;ss:='';
+  i:=1;nc:=length(xstr);
+  while (cont<ind)and(i<nc) do begin
+    if (xstr[i]=#13)and(xstr[i+1]=#10) then begin
+      inc(i);
+      inc(cont);
+    end;
+    inc(i);
+  end;
+  while (i<nc) do begin
+    if (xstr[i]=#13)and(xstr[i+1]=#10) then
+      i:=nc
+    else ss:=ss+xstr[i];
+    inc(i);
+  end;
+  result:=limpiastr(ss);
+end;
+
+function TSQLBReader.NoElemStrEnter(xstr: string): word;
+var i,cont,nc:word;
+begin
+  xstr:=xstr+' ';
+  cont:=1;
+  i:=1;nc:=length(xstr);
+  while (i<nc) do begin
+    if (xstr[i]=#13)and(xstr[i+1]=#10) then begin
+      inc(i);
+      inc(cont);
+    end;
+    inc(i);
+  end;
+  result:=cont;
 end;
 
 end.
