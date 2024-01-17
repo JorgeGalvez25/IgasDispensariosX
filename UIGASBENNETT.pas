@@ -1017,12 +1017,12 @@ begin
                  swdesp:=true;
                  AgregaLog('GUARDA VENTA Pos:'+inttostr(xpos)+' Estatus:'+inttostr(estatus)+' - ant:'+inttostr(estatusant));
                end;
-               if (TPosCarga[xpos].finventa=0) then begin
-                 if Estatus in [7,8] then begin
-                   ss:='J'+IntToClaveNum(xpos,2); // Fin de Venta
-                   ComandoConsola(ss);
-                 end;
-               end;
+//               if (TPosCarga[xpos].finventa=0) then begin
+//                 if Estatus in [7,8] then begin
+//                   ss:='J'+IntToClaveNum(xpos,2); // Fin de Venta
+//                   ComandoConsola(ss);
+//                 end;
+//               end;
              except
              end;
            end;
