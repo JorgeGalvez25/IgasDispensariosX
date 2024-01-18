@@ -14,7 +14,8 @@ uses
   UIGASWAYNE in 'UIGASWAYNE.pas' {ogcvdispensarios_wayne: TService},
   UIGASHONGYANG in 'UIGASHONGYANG.pas' {ogcvdispensarios_hongyang: TService},
   ULIBLICENCIAS in 'ULIBLICENCIAS.pas',
-  UIGASGILBARCO in 'UIGASGILBARCO.pas' {ogcvdispensarios_gilbarco2W: TService};
+  UIGASGILBARCO in 'UIGASGILBARCO.pas' {SQLGReader: TService},
+  UIGASKIROS in 'UIGASKIROS.pas' {ogcvdispensarios_kiros: TService};
 
 {$R *.RES}
 var
@@ -35,7 +36,9 @@ begin
     5:
       Application.CreateForm(Togcvdispensarios_hongyang, ogcvdispensarios_hongyang);
     6:
-      Application.CreateForm(Togcvdispensarios_gilbarco2W, ogcvdispensarios_gilbarco2W);
+      Application.CreateForm(TSQLGReader, SQLGReader);
+    7:
+      Application.CreateForm(Togcvdispensarios_kiros, ogcvdispensarios_kiros);
   end;
   Application.Run;
 end.
