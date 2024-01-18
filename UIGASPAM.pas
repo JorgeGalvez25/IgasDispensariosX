@@ -87,6 +87,7 @@ type
     function FechaHoraExtToStr(FechaHora:TDateTime):String;
     function IniciaPSerial(datosPuerto:string): string;
     procedure ComandoConsola(ss:string);
+    procedure ComandoConsolaBuff(ss:string);
     function CalculaBCC(ss:string):char;
     function CRC16(Data: string): string;
     function XorChar(c1,c2:char):char;
@@ -173,6 +174,7 @@ type
        swcargando:boolean;
        SwActivo,
        SwOCC,SwCmndB,
+       SwPidiendoTotales,
        SwDesHabilitado:boolean;
        ModoOpera:string[8];
        TipoPago:integer;
@@ -248,7 +250,7 @@ var
 
 implementation
 
-uses StrUtils, TypInfo;
+uses StrUtils, TypInfo, DateUtils;
 
 {$R *.DFM}
 
@@ -342,15 +344,7 @@ procedure TSQLPReader.ServerSocket1ClientRead(Sender: TObject;
     metodoEnum:TMetodos;
 begin
   mensaje:=Socket.ReceiveText;
-  if StrToIntDef(mensaje,-99) in [0,1] then begin
-    if Licencia3Ok then begin
-      pSerial.Open:=mensaje='1';
-      Socket.SendText('1');
-    end
-    else
-      Socket.SendText('False|Licencia CVL7 invalida|');       
-    Exit;
-  end;
+  AgregaLogPetRes('R '+mensaje);
   if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))='DISPENSERSX' then begin
     try
       AgregaLogPetRes('R '+mensaje);
@@ -733,6 +727,8 @@ begin
       SwBcc:=false;
       FinLinea:=false;
       SwError:=(lineaTimer=idNak);
+      if SwError then
+        Inc(NumPaso);      
       ProcesaLinea;
       LineaTimer:='';
     end;
@@ -927,12 +923,23 @@ begin
                      descestat:='Despachando';
                      //IniciaCarga:=true;
                      SwCargando:=true;
+                     SwPidiendoTotales:=False;
                    end;
                  3:begin
                      descestat:='Fin de Venta';       // EOT
                      TPosCarga[xpos].HoraOcc:=now-1000*tmsegundo;
                    end;
-                 5:descestat:='Pistola Levantada';  // CALL
+                 5:begin
+                     descestat:='Pistola Levantada';  // CALL
+                     if (estatusant<>estatus) then begin
+                       swautorizada:=false;
+                       FinVenta:=0;
+                       TipoPago:=0;
+                       //SwArosMag:=false;
+                       SwOcc:=false;
+                       ContOcc:=0;
+                     end;
+                   end;
                  6:begin
                      descestat:='Cerrada';            // CLOSED
                      ComandoConsola('L'+inttoclavenum(xpos,2));
@@ -1021,6 +1028,39 @@ begin
                end;
              end;
            end;
+
+           // GUARDA VALORES DE DISPENSARIOS CARGANDO
+           lin:='';xestado:='';xmodo:='';
+           for xpos:=1 to MaxPosCarga do with TPosCarga[xpos] do begin
+             xmodo:=xmodo+ModoOpera[1];
+             if not SwDesHabilitado then begin
+               case estatus of
+                 0:xestado:=xestado+'0'; // Sin Comunicacion
+                 1:xestado:=xestado+'1'; // Inactivo (Idle)
+                 2:xestado:=xestado+'2'; // Cargando (In Use)
+                 3:xestado:=xestado+'3'; // Fin de Carga (Used)
+                 5:xestado:=xestado+'5'; // Llamando (Calling) Pistola Levantada
+                 9:xestado:=xestado+'9'; // Autorizado
+                 8:xestado:=xestado+'8'; // Detenido (Stoped)
+                 else xestado:=xestado+'0';
+               end;
+             end
+             else xestado:=xestado+'7'; // Deshabilitado
+             ss:=inttoclavenum(xpos,2)+'/'+inttostr(xcomb);
+             ss:=ss+'/'+FormatFloat('###0.##',volumen);
+             ss:=ss+'/'+FormatFloat('#0.##',precio);
+             ss:=ss+'/'+FormatFloat('####0.##',importe);
+             lin:=lin+'#'+ss;
+             //end;
+           end;
+           if lin='' then
+             lin:=xestado+'#'
+           else
+             lin:=xestado+lin;
+           lin:=lin+'&'+xmodo;
+           LinEstadoGen:=xestado;
+           // FIN
+
            NumPaso:=2;
            PosicionCargaActual:=0;
          except
@@ -1048,6 +1088,8 @@ begin
                  volumen:=0;
                  precio:=0;
                  CombActual:=0;
+                 PosActual:=0;
+                 MangActual:=0;                 
                end
                else if lin[4]='\' then begin // POSICION NO MAPEADA
                  for i:=1 to nocomb do
@@ -1078,6 +1120,7 @@ begin
                      spre:=copy(lin,22,5);
 
                      xcomb:=CombustibleEnPosicion(xpos,PosActual);
+                     MangActual:=MangueraEnPosicion(xpos,PosActual);
                      if digiPrec=1 then
                        precio:=StrToFloat(spre)/100
                      else if digiPrec=2 then
@@ -1105,6 +1148,8 @@ begin
                      if (Estatus=3)and(SwCargando) then begin// EOT
                        SwCargando:=false;
                        swdesp:=true;
+                       SwPidiendoTotales:=True;
+                       SwTotales[PosActual]:=True;
                      end;
                      CombActual:=CombustibleEnPosicion(xpos,PosActual);
                      if LigaCombs<>'' then begin
@@ -1114,9 +1159,9 @@ begin
                      if (TPosCarga[xpos].finventa=0) then begin
                        if Estatus=3 then begin // EOTS
                          TPosCarga[xpos].finventa:=0;
-                         ss:='R'+IntToClaveNum(xpos,2); // VENTA COMPLETA
-                         ComandoConsola(ss);
-                         EsperaMiliSeg(100);
+//                         ss:='R'+IntToClaveNum(xpos,2); // VENTA COMPLETA
+//                         ComandoConsola(ss);
+//                         EsperaMiliSeg(100);
                        end;
                      end;
                    except
@@ -1198,6 +1243,13 @@ begin
          ContEsperaPaso5:=0;
   end;
 
+  if (ListaCmnd.Count>0)and(not SwEsperaRsp) then begin
+    ss:=ListaCmnd[0];
+    ListaCmnd.Delete(0);
+    ComandoConsola(ss);
+    exit;
+  end;   
+
   // checa lecturas de dispensarios
   if NumPaso=2 then begin
     try
@@ -1232,40 +1284,8 @@ begin
   // Lee Totales
   if NumPaso=3 then begin // TOTALES
     try
-      // GUARDA VALORES DE DISPENSARIOS CARGANDO
-      lin:='';xestado:='';xmodo:='';
-      for xpos:=1 to MaxPosCarga do with TPosCarga[xpos] do begin
-        xmodo:=xmodo+ModoOpera[1];
-        if not SwDesHabilitado then begin
-          case estatus of
-            0:xestado:=xestado+'0'; // Sin Comunicacion
-            1:xestado:=xestado+'1'; // Inactivo (Idle)
-            2:xestado:=xestado+'2'; // Cargando (In Use)
-            3:xestado:=xestado+'3'; // Fin de Carga (Used)
-            5:xestado:=xestado+'5'; // Llamando (Calling) Pistola Levantada
-            9:xestado:=xestado+'9'; // Autorizado
-            8:xestado:=xestado+'8'; // Detenido (Stoped)
-            else xestado:=xestado+'0';
-          end;
-        end
-        else xestado:=xestado+'7'; // Deshabilitado
-        xcomb:=CombustibleEnPosicion(xpos,PosActual);
-        MangActual:=MangueraEnPosicion(xpos,PosActual);
-        ss:=inttoclavenum(xpos,2)+'/'+inttostr(xcomb);
-        ss:=ss+'/'+FormatFloat('###0.##',volumen);
-        ss:=ss+'/'+FormatFloat('#0.##',precio);
-        ss:=ss+'/'+FormatFloat('####0.##',importe);
-        lin:=lin+'#'+ss;
-        //end;
-      end;
-      if lin='' then
-        lin:=xestado+'#'
-      else
-        lin:=xestado+lin;
-      lin:=lin+'&'+xmodo;
-      LinEstadoGen:=xestado;
-      // FIN
       if PosicionCargaActual<=MaxPosCarga then begin
+        PosicionDispenActual:=0;
         repeat
           if PosicionDispenActual=0 then begin
             PosicionCargaActual:=1;
@@ -1278,8 +1298,10 @@ begin
             PosicionDispenActual:=1;
           end;
           if PosicionCargaActual<=MaxPosCarga then begin
+            if PosicionCargaActual<1 then
+              PosicionCargaActual:=1;
             with TPosCarga[PosicionCargaActual] do begin
-              if (estatus=1) and (swtotales[PosicionDispenActual]) then begin
+              if (estatus in [1,3]) and (swtotales[PosicionDispenActual]) then begin
                 if VersionPam1000='3' then
                   ComandoConsola('@10'+'0'+IntToClaveNum(PosicionCargaActual,2))
                 else
@@ -1313,7 +1335,7 @@ begin
   if (NumPaso=4) then begin
     try
       // Checa Comandos
-      for xcmnd:=1 to 40 do if (TabCmnd[xcmnd].SwActivo)and(not TabCmnd[xcmnd].SwResp) then begin
+      for xcmnd:=1 to 200 do if (TabCmnd[xcmnd].SwActivo)and(not TabCmnd[xcmnd].SwResp) then begin
         SwAplicaCmnd:=true;
         ss:=ExtraeElemStrSep(TabCmnd[xcmnd].Comando,1,' ');
         AgregaLog(TabCmnd[xcmnd].Comando);
@@ -1610,7 +1632,7 @@ begin
           SwAplicaCmnd:=False;
           with TPosCarga[xpos] do begin
             if TabCmnd[xcmnd].SwNuevo then begin
-              swAllTotals:=False;
+              AgregaLog('TOTALES EN TODAS LAS MANGUERAS');
               SwTotales[1]:=true;
               SwTotales[2]:=true;
               SwTotales[3]:=true;
@@ -1623,6 +1645,12 @@ begin
                   swAllTotals:=False;
                   Break;
                 end;
+              end;
+
+              if (SwPidiendoTotales) and (SecondsBetween(Now,TabCmnd[xcmnd].hora)>=3) and (not swAllTotals) then begin
+                ToTalLitros[PosActual]:=ToTalLitros[PosActual]+volumen;
+                swAllTotals:=True;
+                SwPidiendoTotales:=False;
               end;
 
               if swAllTotals then begin
@@ -1643,17 +1671,13 @@ begin
             LPrecios[i]:=precioComb;
             if ValidaCifra(precioComb,2,2)='OK' then begin
               if precioComb>=0.01 then begin
-                ComandoConsola('X'+'00'+IntToStr(i)+'1'+'00'+IntToClaveNum(Trunc(precioComb*100+0.5),4)); // contado
-                EsperaMiliSeg(300);
-                ComandoConsola('X'+'00'+IntToStr(i)+'2'+'00'+IntToClaveNum(Trunc(precioComb*100+0.5),4)); // credito
-                EsperaMiliSeg(200);
+                ComandoConsolaBuff('X'+'00'+IntToStr(i)+'1'+'00'+IntToClaveNum(Trunc(precioComb*100+0.5),4)); // contado
+                ComandoConsolaBuff('X'+'00'+IntToStr(i)+'2'+'00'+IntToClaveNum(Trunc(precioComb*100+0.5),4)); // credito
                 if LigaCombs<>'' then begin
                   if i=StrToIntDef(ExtraeElemStrSep(LigaCombs,2,':'),0) then begin
                     combx:=StrToInt(ExtraeElemStrSep(LigaCombs,1,':'));
-                    ComandoConsola('X'+'00'+IntToStr(combx)+'1'+'00'+IntToClaveNum(Trunc(precioComb*100+0.5),4)); // contado
-                    EsperaMiliSeg(300);
-                    ComandoConsola('X'+'00'+IntToStr(combx)+'2'+'00'+IntToClaveNum(Trunc(precioComb*100+0.5),4)); // credito
-                    EsperaMiliSeg(200);
+                    ComandoConsolaBuff('X'+'00'+IntToStr(combx)+'1'+'00'+IntToClaveNum(Trunc(precioComb*100+0.5),4)); // contado
+                    ComandoConsolaBuff('X'+'00'+IntToStr(combx)+'2'+'00'+IntToClaveNum(Trunc(precioComb*100+0.5),4)); // credito
                   end;
                 end;
               end;
@@ -2044,7 +2068,7 @@ function TSQLPReader.MangueraEnPosicion(xpos,xposcarga:integer):integer;
 var i:integer;
 begin
   with TPosCarga[xpos] do begin
-    result:=TComb[1];
+    result:=0;
     for i:=1 to NoComb do begin
       if TPosx[i]=xposcarga then
         result:=TMang[i];
@@ -2128,6 +2152,7 @@ begin
       SwCargando:=false;
       SwAutorizada:=false;
       SwAutorizando:=false;
+      SwPidiendoTotales:=False;
       for j:=1 to MCxP do begin
         SwTotales[j]:=true;
         TotalLitros[j]:=0;
@@ -2367,6 +2392,8 @@ var ss:string;
 //    i:integer;
 begin
   try
+    if NumPaso>4 then
+      NumPaso:=0;    
     if NumPaso>1 then begin
       if NumPaso=2 then begin // si esta en espera de respuesta ACK
         inc(ContEsperaPaso2);     // espera hasta 5 ciclos
@@ -3011,6 +3038,14 @@ begin
   end
   else
     Result:='False|Licencia CVL7 invalida|';
+end;
+
+procedure TSQLPReader.ComandoConsolaBuff(ss: string);
+begin
+  if (ListaCmnd.Count=0)and(not SwEsperaRsp) then
+    ComandoConsola(ss)
+  else
+    ListaCmnd.Add(ss);
 end;
 
 end.
