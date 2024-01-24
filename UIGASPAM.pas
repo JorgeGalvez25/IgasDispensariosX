@@ -217,7 +217,7 @@ type TMetodos = (NOTHING_e, INITIALIZE_e, PARAMETERS_e, LOGIN_e, LOGOUT_e,
              PRICES_e, AUTHORIZE_e, STOP_e, START_e, SELFSERVICE_e, FULLSERVICE_e,
              BLOCK_e, UNBLOCK_e, PAYMENT_e, TRANSACTION_e, STATUS_e, TOTALS_e, HALT_e,
              RUN_e, SHUTDOWN_e, TERMINATE_e, STATE_e, TRACE_e, SAVELOGREQ_e, RESPCMND_e,
-             LOG_e, LOGREQ_e, EJECCMND_e, FLUSTD_e, FLUMIN_e);
+             LOG_e, LOGREQ_e, EJECCMND_e, FLUSTD_e, FLUMIN_e, FLUACT_e);
 
 
 var
@@ -370,6 +370,8 @@ begin
             Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro));
           FLUMIN_e:
             Socket.SendText('DISPENSERSX|FLUMIN|'+FluMin);
+          FLUACT_e:
+            Socket.SendText('DISPENSERSX|FLUACT|'+FluAct(parametro));
           RESPCMND_e:
             Socket.SendText('DISPENSERSX|RESPCMND|'+RespuestaComando(parametro));
         else
@@ -893,9 +895,9 @@ begin
                        SwFlu:=False;
                      end
                      else if (FluStd) and (SwFlu) then begin
-                       if VersionPam1000='3' then
-                         ss:='@020'+IntToClaveNum(xpos,2)+'010937150111000'
-                       else
+//                       if VersionPam1000='3' then
+//                         ss:='@020'+IntToClaveNum(xpos,2)+'010937150111000'
+//                       else
                          ss:='P'+IntToClaveNum(xpos,2)+'0'+'1'+'000937150';
                        ComandoConsola(ss);
                        EsperaMiliseg(500);
@@ -1739,9 +1741,9 @@ begin
                 xPosStop2:=PosTarjeta2;
             end;
             if ValorPAM1<>'' then begin
-              if VersionPam1000='3' then
-                ss:='@020'+IntToClaveNum(xposstop,2)+'010'+ValorPAM1+'111000'
-              else
+//              if VersionPam1000='3' then
+//                ss:='@020'+IntToClaveNum(xposstop,2)+'010'+ValorPAM1+'111000'
+//              else
                 ss:='P'+IntToClaveNum(xposstop,2)+'0'+'1'+'000'+ValorPAM1+'0';
               ComandoConsola(ss);
               EsperaMiliseg(500);
@@ -1837,9 +1839,9 @@ begin
                 xPosStop2:=PosTarjeta2;
             end;
             if ValorPAM1<>'' then begin
-              if VersionPam1000='3' then
-                ss:='@020'+IntToClaveNum(xposstop,2)+'010'+ValorPAM1+'111000'
-              else
+//              if VersionPam1000='3' then
+//                ss:='@020'+IntToClaveNum(xposstop,2)+'010'+ValorPAM1+'111000'
+//              else
                 ss:='P'+IntToClaveNum(xposstop,2)+'0'+'1'+'000'+ValorPAM1+'0';
               ComandoConsola(ss);
               EsperaMiliseg(500);
@@ -1848,8 +1850,8 @@ begin
               EsperaMiliseg(500);
               if PosTarjeta2>0 then begin
                 if VersionPam1000='3' then
-                  ss:='@020'+IntToClaveNum(xPosStop2,2)+'010'+ValorPAM1+'111000'
-                else
+//                  ss:='@020'+IntToClaveNum(xPosStop2,2)+'010'+ValorPAM1+'111000'
+//                else
                   ss:='P'+IntToClaveNum(xPosStop2,2)+'0'+'1'+'000'+ValorPAM1+'0';
                 ComandoConsola(ss);
                 EsperaMiliseg(500);
