@@ -80,6 +80,8 @@ type
     ContadorTotPos,
     ContadorTot :Integer;
     ListaComandos:TStringList;
+    horaLog:TDateTime;
+    minutosLog:Integer;
     function GetServiceController: TServiceController; override;
     procedure AgregaLog(lin:string);
     procedure AgregaLogPetRes(lin: string);
@@ -277,11 +279,13 @@ begin
     rutaLog:=config.ReadString('CONF','RutaLog','C:\ImagenCo');
     ServerSocket1.Port:=config.ReadInteger('CONF','Puerto',1001);
     licencia:=config.ReadString('CONF','Licencia','');
+    minutosLog:=StrToInt(config.ReadString('CONF','MinutosLog','0'));
     ListaCmnd:=TStringList.Create;
     ServerSocket1.Active:=True;
     detenido:=True;
     estado:=-1;
     SwComandoB:=false;
+    horaLog:=Now;
     ListaLog:=TStringList.Create;
     ListaLogPetRes:=TStringList.Create;
 
@@ -2388,6 +2392,10 @@ var ss:string;
 //    i:integer;
 begin
   try
+    if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
+      horaLog:=Now;
+      GuardarLog;
+    end;
     if NumPaso>4 then
       NumPaso:=0;    
     if NumPaso>1 then begin

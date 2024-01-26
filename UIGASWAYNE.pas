@@ -80,6 +80,8 @@ type
     ContEsperaRsp:integer;
     FolioCmnd   :integer;
     ListaComandos:TStringList;
+    horaLog:TDateTime;
+    minutosLog:Integer;
     function GetServiceController: TServiceController; override;
     procedure AgregaLogPetRes(lin: string);
     procedure Responder(socket:TCustomWinSocket;resp:string);
@@ -238,7 +240,7 @@ var
 
 implementation
 
-uses StrUtils, TypInfo;
+uses StrUtils, TypInfo, DateUtils;
 
 {$R *.DFM}
 
@@ -262,6 +264,7 @@ begin
     rutaLog:=config.ReadString('CONF','RutaLog','C:\ImagenCo');
     ServerSocket1.Port:=config.ReadInteger('CONF','Puerto',8585);
     licencia:=config.ReadString('CONF','Licencia','');
+    minutosLog:=StrToInt(config.ReadString('CONF','MinutosLog','0'));
     ListaCmnd:=TStringList.Create;
     ServerSocket1.Active:=True;
     detenido:=True;
@@ -269,6 +272,7 @@ begin
     SwReinicio:=False;
     estado:=-1;
     SwComandoB:=false;
+    horaLog:=Now;
     ListaLog:=TStringList.Create;
     ListaLogPetRes:=TStringList.Create;
 
@@ -1910,6 +1914,10 @@ var ss,rsp,str1:string;
     swok,swerr,swAllTotals:boolean;
 begin
   try
+    if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
+      horaLog:=Now;
+      GuardarLog;
+    end;   
     if PrecioFisicoProc>0 then begin
       inc(ContPrecioFisico);
       if ContPrecioFisico>20 then

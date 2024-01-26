@@ -65,6 +65,8 @@ type
     SwEsperaRsp  :boolean;
     ContEsperaRsp:integer;
     FolioCmnd   :integer;
+    horaLog:TDateTime;
+    minutosLog:Integer;
     function GetServiceController: TServiceController; override;
     procedure AgregaLog(lin:string);
     procedure AgregaLogPetRes(lin: string);
@@ -231,7 +233,7 @@ var
 
 implementation
 
-uses StrUtils, TypInfo, Math;
+uses StrUtils, TypInfo, Math, DateUtils;
 
 {$R *.DFM}
 
@@ -259,6 +261,7 @@ begin
     rutaLog:=config.ReadString('CONF','RutaLog','C:\ImagenCo');
     ServerSocket1.Port:=config.ReadInteger('CONF','Puerto',8585);
     licencia:=config.ReadString('CONF','Licencia','');
+    minutosLog:=StrToInt(config.ReadString('CONF','MinutosLog','0'));
     ContadorAlarma:=0;
     ListaCmnd:=TStringList.Create;
     SwEsperaRsp:=false;
@@ -266,6 +269,7 @@ begin
     detenido:=True;
     estado:=-1;
     SegundosFinv:=30;
+    horaLog:=Now;
     ListaLog:=TStringList.Create;
     ListaLogPetRes:=TStringList.Create;
     ListaComandos:=TStringList.Create;
@@ -1914,6 +1918,10 @@ end;
 procedure TSQLBReader.Timer1Timer(Sender: TObject);
 begin
   try
+    if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
+      horaLog:=Now;
+      GuardarLog;
+    end;  
     if not SwEsperaRsp then begin // NO HAY COMANDOS EN PROCESO
       ComandoConsola('B00');
     end
