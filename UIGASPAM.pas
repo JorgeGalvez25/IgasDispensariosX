@@ -80,6 +80,8 @@ type
     ContadorTotPos,
     ContadorTot :Integer;
     ListaComandos:TStringList;
+    horaLog:TDateTime;
+    minutosLog:Integer;
     function GetServiceController: TServiceController; override;
     procedure AgregaLog(lin:string);
     procedure AgregaLogPetRes(lin: string);
@@ -277,11 +279,13 @@ begin
     rutaLog:=config.ReadString('CONF','RutaLog','C:\ImagenCo');
     ServerSocket1.Port:=config.ReadInteger('CONF','Puerto',1001);
     licencia:=config.ReadString('CONF','Licencia','');
+    minutosLog:=StrToInt(config.ReadString('CONF','MinutosLog','0'));
     ListaCmnd:=TStringList.Create;
     ServerSocket1.Active:=True;
     detenido:=True;
     estado:=-1;
     SwComandoB:=false;
+    horaLog:=Now;
     ListaLog:=TStringList.Create;
     ListaLogPetRes:=TStringList.Create;
 
@@ -347,8 +351,6 @@ begin
   AgregaLogPetRes('R '+mensaje);
   if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))='DISPENSERSX' then begin
     try
-      AgregaLogPetRes('R '+mensaje);
-
       if NoElemStrSep(mensaje,'|')>=2 then begin
 
         comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
@@ -390,8 +392,6 @@ begin
   end
   else begin
     try
-      mensaje:=Key.Decrypt(ExtractFilePath(ParamStr(0)),key3DES,mensaje);
-      AgregaLogPetRes('R '+mensaje);
       for i:=1 to Length(mensaje) do begin
         if mensaje[i]=#2 then begin
           mensaje:=Copy(mensaje,i+1,Length(mensaje));
@@ -485,9 +485,9 @@ begin
           RESPCMND_e:
             Responder(Socket, 'DISPENSERS|RESPCMND|'+RespuestaComando(parametro));
           LOG_e:
-            Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOG|'+ObtenerLog(StrToIntDef(parametro, 0))));
+            Socket.SendText('DISPENSERS|LOG|'+ObtenerLog(StrToIntDef(parametro, 0)));
           LOGREQ_e:
-            Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOGREQ|'+ObtenerLogPetRes(StrToIntDef(parametro, 0))));
+            Socket.SendText('DISPENSERS|LOGREQ|'+ObtenerLogPetRes(StrToIntDef(parametro, 0)));
         else
           Responder(Socket, 'DISPENSERS|'+comando+'|False|Comando desconocido|');
         end;
@@ -549,7 +549,7 @@ end;
 
 procedure TSQLPReader.Responder(socket: TCustomWinSocket; resp: string);
 begin
-  socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)),key3DES,#1#2+resp+#3+CRC16(resp)+#23));
+  socket.SendText(#1#2+resp+#3+CRC16(resp)+#23);
   AgregaLogPetRes('E '+#1#2+resp+#3+CRC16(resp)+#23);
 end;
 
@@ -2394,6 +2394,10 @@ var ss:string;
 //    i:integer;
 begin
   try
+    if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
+      horaLog:=Now;
+      GuardarLog;
+    end;
     if NumPaso>4 then
       NumPaso:=0;    
     if NumPaso>1 then begin

@@ -5,10 +5,11 @@ interface
 uses
   Windows, Messages, SysUtils, Classes, Graphics, Controls, SvcMgr, Dialogs,
   IniFiles, ScktComp, ULIBGRAL, uLkJSON, CRCs, Variants, ExtCtrls, OoMisc,
-  AdPort, IdHashMessageDigest, IdHash, ActiveX, ComObj;
+  AdPort, IdHashMessageDigest, IdHash, ActiveX, ComObj, LbCipher, LbString,
+  ULIBLICENCIAS;
 
 type
-  Togcvdispensarios_wayne = class(TService)
+  TSQLWReader = class(TService)
     ServerSocket1: TServerSocket;
     pSerial: TApdComPort;
     Timer1: TTimer;
@@ -62,7 +63,9 @@ type
     SnPosCarga              :integer;
     SwReinicio,SwBcc:Boolean;
     SnImporte,
-    SnLitros                :real;    
+    SnLitros                :real;
+    ConfAdic:String;
+    TAdic31   :array[1..32] of real; 
     function CRC16(Data: string): string;
   public
     { Public declarations }
@@ -80,6 +83,8 @@ type
     ContEsperaRsp:integer;
     FolioCmnd   :integer;
     ListaComandos:TStringList;
+    horaLog:TDateTime;
+    minutosLog:Integer;
     function GetServiceController: TServiceController; override;
     procedure AgregaLogPetRes(lin: string);
     procedure Responder(socket:TCustomWinSocket;resp:string);
@@ -128,7 +133,9 @@ type
     function MangueraEnPosicion(xpos,xposcarga:integer):integer;
     procedure GuardaLogComandos;
     function NoElemStrEnter(xstr:string):word;
-    function ExtraeElemStrEnter(xstr:string;ind:word):string;    
+    function ExtraeElemStrEnter(xstr:string;ind:word):string;
+    function FluStd(msj: string):string;
+    function FluMin:string;      
   end;
 
 type
@@ -164,11 +171,14 @@ type
        SwParado,
        SwDesHabilitado,
        SwOCC,SwCmndB,
+       SwPidiendoTotales,
        SwFINV             :boolean;
        Mensaje :string[12];
        ValorMapeo :string[10];
        ModoOpera:string[8];
        Mapa     :string[4];
+       SwAdic,
+       ContAdic:Integer;
 
        ContDetenido:integer;
        ContOcc,
@@ -185,6 +195,7 @@ type
        HoraOcc:TDateTime;
        CombActual:Integer;
        MangActual:Integer;
+       esDiesel:Boolean;
 
      end;
 
@@ -213,12 +224,13 @@ type TMetodos = (NOTHING_e, INITIALIZE_e, PARAMETERS_e,
                  BLOCK_e, UNBLOCK_e, PAYMENT_e, TRANSACTION_e,
                  STATUS_e, TOTALS_e, HALT_e, RUN_e, SHUTDOWN_e,
                  TERMINATE_e, STATE_e, TRACE_e, SAVELOGREQ_e,
-                 RESPCMND_e, LOG_e, LOGREQ_e);
+                 RESPCMND_e, LOG_e, LOGREQ_e, EJECCMND_e, FLUSTD_e,
+                 FLUMIN_e);
 
 
 
 var
-  ogcvdispensarios_wayne: Togcvdispensarios_wayne;
+  SQLWReader: TSQLWReader;
   SwComandoB    :boolean;
   TPrecio:array[1..9] of real;
   TPosCarga:array[1..32] of tiposcarga;
@@ -229,39 +241,46 @@ var
   PreciosInicio,
   SwCerrar    :boolean;
   ListaCmnd    :TStrings;
+  SwEspMin,
   SwEsperaRsp  :boolean;
   Token        :string;
   TabCmnd  :array[1..200] of RegCmnd;
   LinEstadoGen  :string;
   key:OleVariant;
   claveCre,key3DES:string;
+  Licencia3Ok  :Boolean;
 
 implementation
 
-uses StrUtils, TypInfo;
+uses StrUtils, TypInfo, DateUtils;
 
 {$R *.DFM}
 
 procedure ServiceController(CtrlCode: DWord); stdcall;
 begin
-  ogcvdispensarios_wayne.Controller(CtrlCode);
+  SQLWReader.Controller(CtrlCode);
 end;
 
-function Togcvdispensarios_wayne.GetServiceController: TServiceController;
+function TSQLWReader.GetServiceController: TServiceController;
 begin
   Result := ServiceController;
 end;
 
-procedure Togcvdispensarios_wayne.ServiceExecute(Sender: TService);
+procedure TSQLWReader.ServiceExecute(Sender: TService);
 var
   config:TIniFile;
   lic:string;
+  razonSocial,licAdic:String;
+  esLicTemporal:Boolean;
+  fechaVenceLic:TDateTime;   
 begin
   try
     config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
     rutaLog:=config.ReadString('CONF','RutaLog','C:\ImagenCo');
     ServerSocket1.Port:=config.ReadInteger('CONF','Puerto',8585);
     licencia:=config.ReadString('CONF','Licencia','');
+    ConfAdic:=config.ReadString('CONF','ConfAdic','');
+    minutosLog:=StrToInt(config.ReadString('CONF','MinutosLog','0'));
     ListaCmnd:=TStringList.Create;
     ServerSocket1.Active:=True;
     detenido:=True;
@@ -269,8 +288,24 @@ begin
     SwReinicio:=False;
     estado:=-1;
     SwComandoB:=false;
+    horaLog:=Now;
     ListaLog:=TStringList.Create;
     ListaLogPetRes:=TStringList.Create;
+
+    //LicenciaAdic
+    razonSocial:=config.ReadString('CONF','RazonSocial','');
+    licAdic:=config.ReadString('CONF','LicCVL7','');
+    esLicTemporal:=config.ReadString('CONF','LicCVL7FechaVence','')<>'';
+    fechaVenceLic:=StrToDateDef(config.ReadString('CONF','LicCVL7FechaVence','01/01/1900'),0);
+
+    try
+      Licencia3Ok:=LicenciaValida2(razonSocial,'CVL7','3.1','Abierta',licAdic,1,esLicTemporal,fechaVenceLic);
+    except
+      Licencia3Ok:=false;
+    end;
+
+    if not Licencia3Ok then
+      ListaLog.Add('Datos Licencia CVL7 invalida: '+razonSocial+'-'+licAdic+'-'+BoolToStr(esLicTemporal)+'-'+DateToStr(fechaVenceLic));
 
     CoInitialize(nil);
     Key:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
@@ -285,6 +320,7 @@ begin
     else begin
       claveCre:=ExtraeElemStrSep(lic,2,'|');
       key3DES:=ExtraeElemStrSep(lic,3,'|');
+      key:=Unassigned;
     end;    
 
     while not Terminated do
@@ -299,7 +335,7 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_wayne.ServerSocket1ClientRead(Sender: TObject;
+procedure TSQLWReader.ServerSocket1ClientRead(Sender: TObject;
   Socket: TCustomWinSocket);
   var
     mensaje,comando,checksum,parametro:string;
@@ -309,115 +345,150 @@ procedure Togcvdispensarios_wayne.ServerSocket1ClientRead(Sender: TObject;
 begin
   try
     mensaje:=Socket.ReceiveText;
-    if StrToIntDef(mensaje,-99) in [0,1] then begin
-      pSerial.Open:=mensaje='1';
-      Socket.SendText('1');
-      Exit;
-    end;
-    mensaje:=Key.Decrypt(ExtractFilePath(ParamStr(0)),key3DES,mensaje);
     AgregaLogPetRes('R '+mensaje);
-    for i:=1 to Length(mensaje) do begin
-      if mensaje[i]=#2 then begin
-        mensaje:=Copy(mensaje,i+1,Length(mensaje));
-        Break;
-      end;
-    end;
-    for i:=Length(mensaje) downto 1 do begin              
-      if mensaje[i]=#3 then begin
-        checksum:=Copy(mensaje,i+1,4);
-        mensaje:=Copy(mensaje,1,i-1);
-        Break;
-      end;
-    end;
-    chks_valido:=checksum=CRC16(mensaje);
-    if mensaje[1]='|' then
-      Delete(mensaje,1,1);
-    if mensaje[Length(mensaje)]='|' then
-      Delete(mensaje,Length(mensaje),1);
-    if NoElemStrSep(mensaje,'|')>=2 then begin
-      if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))<>'DISPENSERS' then begin
-        Responder(Socket,'DISPENSERS|False|Este servicio solo procesa solicitudes de dispensarios|');
-        Exit;
-      end;
+    if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))='DISPENSERSX' then begin
+      try
+        if NoElemStrSep(mensaje,'|')>=2 then begin
 
-      comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
+          comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
 
-      if not chks_valido then begin
-        Responder(Socket,'DISPENSERS|'+comando+'|False|Checksum invalido|');
-        Exit;
-      end;
+          if NoElemStrSep(mensaje,'|')>2 then begin
+            for i:=3 to NoElemStrSep(mensaje,'|') do
+              parametro:=parametro+ExtraeElemStrSep(mensaje,i,'|')+'|';
 
-      if NoElemStrSep(mensaje,'|')>2 then begin
-        for i:=3 to NoElemStrSep(mensaje,'|') do
-          parametro:=parametro+ExtraeElemStrSep(mensaje,i,'|')+'|';
+            if parametro[Length(parametro)]='|' then
+              Delete(parametro,Length(parametro),1);
+          end;
 
-        if parametro[Length(parametro)]='|' then
-          Delete(parametro,Length(parametro),1);
-      end;
+          metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
 
-      metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
-
-      case metodoEnum of
-        NOTHING_e:
-          Responder(Socket, 'DISPENSERS|NOTHING|True|');
-        INITIALIZE_e:
-          Responder(Socket, 'DISPENSERS|INITIALIZE|'+Inicializar(parametro));
-        PARAMETERS_e:
-          Responder(Socket, 'DISPENSERS|PARAMETERS|True|');
-        LOGIN_e:
-          Responder(Socket, 'DISPENSERS|LOGIN|'+Login(parametro));
-        LOGOUT_e:
-          Responder(Socket, 'DISPENSERS|LOGOUT|'+Logout);
-        PRICES_e:
-          Responder(Socket, 'DISPENSERS|PRICES|'+IniciaPrecios(parametro));
-        AUTHORIZE_e:
-          Responder(Socket, 'DISPENSERS|AUTHORIZE|'+AutorizarVenta(parametro));
-        STOP_e:
-          Responder(Socket, 'DISPENSERS|STOP|'+DetenerVenta(parametro));
-        START_e:
-          Responder(Socket, 'DISPENSERS|START|'+ReanudarVenta(parametro));
-        SELFSERVICE_e:
-          Responder(Socket, 'DISPENSERS|SELFSERVICE|'+ActivaModoPrepago(parametro));
-        FULLSERVICE_e:
-          Responder(Socket, 'DISPENSERS|FULLSERVICE|'+DesactivaModoPrepago(parametro));
-        BLOCK_e:
-          Responder(Socket, 'DISPENSERS|BLOCK|'+Bloquear(parametro));
-        UNBLOCK_e:
-          Responder(Socket, 'DISPENSERS|UNBLOCK|'+Desbloquear(parametro));
-        PAYMENT_e:
-          Responder(Socket, 'DISPENSERS|PAYMENT|'+FinVenta(parametro));
-        TRANSACTION_e:
-          Responder(Socket, 'DISPENSERS|TRANSACTION|'+TransaccionPosCarga(parametro));
-        STATUS_e:
-          Responder(Socket, 'DISPENSERS|STATUS|'+EstadoPosiciones(parametro));
-        TOTALS_e:
-          Responder(Socket, 'DISPENSERS|TOTALS|'+TotalesBomba(parametro));
-        HALT_e:
-          Responder(Socket, 'DISPENSERS|HALT|'+Detener);
-        RUN_e:
-          Responder(Socket, 'DISPENSERS|RUN|'+Iniciar);
-        SHUTDOWN_e:
-          Responder(Socket, 'DISPENSERS|SHUTDOWN|'+Shutdown);
-        TERMINATE_e:
-          Responder(Socket, 'DISPENSERS|TERMINATE|'+Terminar);
-        STATE_e:
-          Responder(Socket, 'DISPENSERS|STATE|'+ObtenerEstado);
-        TRACE_e:
-          Responder(Socket, 'DISPENSERS|TRACE|'+GuardarLog);
-        SAVELOGREQ_e:
-          Responder(Socket, 'DISPENSERS|SAVELOGREQ|'+GuardarLogPetRes);
-        RESPCMND_e:
-          Responder(Socket, 'DISPENSERS|RESPCMND|'+RespuestaComando(parametro));
-        LOG_e:
-          Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOG|'+ObtenerLog(StrToIntDef(parametro, 0))));
-        LOGREQ_e:
-          Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOGREQ|'+ObtenerLogPetRes(StrToIntDef(parametro, 0))));
-      else
-        Responder(Socket, 'DISPENSERS|'+comando+'|False|Comando desconocido|');
+          case metodoEnum of
+            EJECCMND_e:
+              Socket.SendText('DISPENSERSX|EJECCMND|True|'+IntToStr(EjecutaComando(parametro))+'|');
+            FLUSTD_e:
+              Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro));
+            FLUMIN_e:
+              Socket.SendText('DISPENSERSX|FLUMIN|'+FluMin);
+            RESPCMND_e:
+              Socket.SendText('DISPENSERSX|RESPCMND|'+RespuestaComando(parametro));
+          else
+            Socket.SendText('DISPENSERSX|'+comando+'|False|Comando desconocido|');
+          end;
+        end
+        else
+          Socket.SendText('DISPENSERSX|'+mensaje+'|False|Comando desconocido|');
+      except
+        on e:Exception do begin
+          AgregaLogPetRes('Error ServerSocket1ClientRead: '+e.Message);
+          GuardarLogPetRes;
+          Socket.SendText('DISPENSERSX|'+comando+'|False|'+e.Message+'|');
+        end;
       end;
     end
-    else
-      Responder(Socket,'DISPENSERS|'+mensaje+'|False|Comando desconocido|');
+    else begin
+      for i:=1 to Length(mensaje) do begin
+        if mensaje[i]=#2 then begin
+          mensaje:=Copy(mensaje,i+1,Length(mensaje)-i);
+          Break;
+        end;
+      end;
+      for i:=Length(mensaje) downto 1 do begin
+        if mensaje[i]=#3 then begin
+          checksum:=Copy(mensaje,i+1,4);
+          mensaje:=Copy(mensaje,1,i-1);
+          Break;
+        end;
+      end;
+      chks_valido:=checksum=CRC16(mensaje);
+      if mensaje[1]='|' then
+        Delete(mensaje,1,1);
+      if mensaje[Length(mensaje)]='|' then
+        Delete(mensaje,Length(mensaje),1);
+      if NoElemStrSep(mensaje,'|')>=2 then begin
+        if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))<>'DISPENSERS' then begin
+          Responder(Socket,'DISPENSERS|False|Este servicio solo procesa solicitudes de dispensarios|');
+          Exit;
+        end;
+
+        comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
+
+        if not chks_valido then begin
+          Responder(Socket,'DISPENSERS|'+comando+'|False|Checksum invalido|');
+          Exit;
+        end;
+
+        if NoElemStrSep(mensaje,'|')>2 then begin
+          for i:=3 to NoElemStrSep(mensaje,'|') do
+            parametro:=parametro+ExtraeElemStrSep(mensaje,i,'|')+'|';
+
+          if parametro[Length(parametro)]='|' then
+            Delete(parametro,Length(parametro),1);
+        end;
+
+        metodoEnum := TMetodos(GetEnumValue(TypeInfo(TMetodos), comando+'_e'));
+
+        case metodoEnum of
+          NOTHING_e:
+            Responder(Socket, 'DISPENSERS|NOTHING|True|');
+          INITIALIZE_e:
+            Responder(Socket, 'DISPENSERS|INITIALIZE|'+Inicializar(parametro));
+          PARAMETERS_e:
+            Responder(Socket, 'DISPENSERS|PARAMETERS|True|');
+          LOGIN_e:
+            Responder(Socket, 'DISPENSERS|LOGIN|'+Login(parametro));
+          LOGOUT_e:
+            Responder(Socket, 'DISPENSERS|LOGOUT|'+Logout);
+          PRICES_e:
+            Responder(Socket, 'DISPENSERS|PRICES|'+IniciaPrecios(parametro));
+          AUTHORIZE_e:
+            Responder(Socket, 'DISPENSERS|AUTHORIZE|'+AutorizarVenta(parametro));
+          STOP_e:
+            Responder(Socket, 'DISPENSERS|STOP|'+DetenerVenta(parametro));
+          START_e:
+            Responder(Socket, 'DISPENSERS|START|'+ReanudarVenta(parametro));
+          SELFSERVICE_e:
+            Responder(Socket, 'DISPENSERS|SELFSERVICE|'+ActivaModoPrepago(parametro));
+          FULLSERVICE_e:
+            Responder(Socket, 'DISPENSERS|FULLSERVICE|'+DesactivaModoPrepago(parametro));
+          BLOCK_e:
+            Responder(Socket, 'DISPENSERS|BLOCK|'+Bloquear(parametro));
+          UNBLOCK_e:
+            Responder(Socket, 'DISPENSERS|UNBLOCK|'+Desbloquear(parametro));
+          PAYMENT_e:
+            Responder(Socket, 'DISPENSERS|PAYMENT|'+FinVenta(parametro));
+          TRANSACTION_e:
+            Responder(Socket, 'DISPENSERS|TRANSACTION|'+TransaccionPosCarga(parametro));
+          STATUS_e:
+            Responder(Socket, 'DISPENSERS|STATUS|'+EstadoPosiciones(parametro));
+          TOTALS_e:
+            Responder(Socket, 'DISPENSERS|TOTALS|'+TotalesBomba(parametro));
+          HALT_e:
+            Responder(Socket, 'DISPENSERS|HALT|'+Detener);
+          RUN_e:
+            Responder(Socket, 'DISPENSERS|RUN|'+Iniciar);
+          SHUTDOWN_e:
+            Responder(Socket, 'DISPENSERS|SHUTDOWN|'+Shutdown);
+          TERMINATE_e:
+            Responder(Socket, 'DISPENSERS|TERMINATE|'+Terminar);
+          STATE_e:
+            Responder(Socket, 'DISPENSERS|STATE|'+ObtenerEstado);
+          TRACE_e:
+            Responder(Socket, 'DISPENSERS|TRACE|'+GuardarLog);
+          SAVELOGREQ_e:
+            Responder(Socket, 'DISPENSERS|SAVELOGREQ|'+GuardarLogPetRes);
+          RESPCMND_e:
+            Responder(Socket, 'DISPENSERS|RESPCMND|'+RespuestaComando(parametro));
+          LOG_e:
+            Socket.SendText('DISPENSERS|LOG|'+ObtenerLog(StrToIntDef(parametro, 0)));
+          LOGREQ_e:
+            Socket.SendText('DISPENSERS|LOGREQ|'+ObtenerLogPetRes(StrToIntDef(parametro, 0)));
+        else
+          Responder(Socket, 'DISPENSERS|'+comando+'|False|Comando desconocido|');
+        end;
+      end
+      else
+        Responder(Socket,'DISPENSERS|'+mensaje+'|False|Comando desconocido|');
+    end;
   except
     on e:Exception do begin
       if (claveCre<>'') and (key3DES<>'') then
@@ -430,7 +501,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.CRC16(Data: AnsiString): AnsiString;
+function TSQLWReader.CRC16(Data: AnsiString): AnsiString;
 var
   aCrc:TCRC;
   pin : Pointer;
@@ -444,7 +515,7 @@ begin
   aCrc.Destroy;
 end;
 
-procedure Togcvdispensarios_wayne.AgregaLogPetRes(lin: string);
+procedure TSQLWReader.AgregaLogPetRes(lin: string);
 var lin2:string;
     i:integer;
 begin
@@ -458,20 +529,20 @@ begin
       #21:lin2:=lin2+'<NAK>';
       #23:lin2:=lin2+'<ETB>';
       else lin2:=lin2+lin[i];
-    end;
+    end;  
   while ListaLogPetRes.Count>10000 do
     ListaLogPetRes.Delete(0);
   ListaLogPetRes.Add(lin2);
 end;
 
-procedure Togcvdispensarios_wayne.Responder(socket: TCustomWinSocket;
+procedure TSQLWReader.Responder(socket: TCustomWinSocket;
   resp: string);
 begin
-  socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)),key3DES,#1#2+resp+#3+CRC16(resp)+#23));
+  socket.SendText(#1#2+resp+#3+CRC16(resp)+#23);
   AgregaLogPetRes('E '+#1#2+resp+#3+CRC16(resp)+#23);
 end;
 
-function Togcvdispensarios_wayne.Inicializar(msj: string): string;
+function TSQLWReader.Inicializar(msj: string): string;
 var
   js: TlkJSONBase;
   consolas,dispensarios,productos: TlkJSONbase;
@@ -497,6 +568,8 @@ begin
     DecimalesPresetWayne:=-1;
     DecimalesPresetWayneLitros:=3;
     Con_DigitoAjuste:=0;
+    SoportaSeleccionProducto:='Si';
+    Con_Precio:=0;
     for i:=1 to NoElemStrEnter(variables) do begin
       variable:=ExtraeElemStrEnter(variables,i);
       if UpperCase(ExtraeElemStrSep(variable,1,'='))='WAYNEFUSION' then
@@ -519,6 +592,8 @@ begin
         DecimalesPresetWayneLitros:=StrToInt(ExtraeElemStrSep(variable,2,'='))
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='CONDIGITOAJUSTE' then
         Con_DigitoAjuste:=StrToInt(ExtraeElemStrSep(variable,2,'='))
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='CONPRECIO' then
+        Con_Precio:=StrToInt(ExtraeElemStrSep(variable,2,'='))
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='SOPORTASELECCIONPRODUCTO' then
         SoportaSeleccionProducto:=ExtraeElemStrSep(variable,2,'=');
     end;
@@ -551,7 +626,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.IniciaPSerial(
+function TSQLWReader.IniciaPSerial(
   datosPuerto: string): string;
 var
   puerto:string;
@@ -622,7 +697,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.AgregaPosCarga(
+function TSQLWReader.AgregaPosCarga(
   posiciones: TlkJSONbase): string;
 var
   i,j,k,xpos,xcomb,conPosicion:integer;
@@ -676,6 +751,7 @@ begin
         SwDesp:=false;
         SwPrec:=false;
         ModoOpera:='Prepago';
+        esDiesel:=True;
         //Mapa:=Q_BombIbImpreTarjetas.AsString;
         if InicializaWayne='Si' then
           RefrescaEnllavados:=true
@@ -694,6 +770,8 @@ begin
           if not existe then begin
             inc(NoComb);
             TComb[NoComb]:=xcomb;
+            if xcomb in [1,2] then
+              esDiesel:=False;
             if conPosicion>0 then
               TPos[NoComb]:=conPosicion
             else if NoComb<=4 then
@@ -702,7 +780,7 @@ begin
               TPos[NoComb]:=1;
             TMang[NoComb]:=conPosicion;
             TPrec[TPos[NoComb]]:=Con_Precio;
-            TDiga[TPos[NoComb]]:=Con_DigitoAjuste;
+            TDiga[1]:=Con_DigitoAjuste;
             TDigvol[TPos[NoComb]]:=DigitoAjusteVol;
             TDigPreset[TPos[NoComb]]:=DigitoAjustePreset;
           end;
@@ -715,7 +793,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.Login(mensaje: string): string;
+function TSQLWReader.Login(mensaje: string): string;
 var
   usuario,password:string;
 begin
@@ -729,13 +807,13 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.Logout: string;
+function TSQLWReader.Logout: string;
 begin
   Token:='';
   Result:='True|';
 end;
 
-function Togcvdispensarios_wayne.MD5(const usuario: string): string;
+function TSQLWReader.MD5(const usuario: string): string;
 var
   idmd5:TIdHashMessageDigest5;
   hash:T4x4LongWordRecord;
@@ -747,7 +825,7 @@ begin
   idmd5.Destroy;
 end;
 
-function Togcvdispensarios_wayne.IniciaPrecios(msj: string): string;
+function TSQLWReader.IniciaPrecios(msj: string): string;
 var
   ss:string;
   precioComb:Double;
@@ -788,7 +866,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.ValidaCifra(xvalor: real; xenteros,
+function TSQLWReader.ValidaCifra(xvalor: real; xenteros,
   xdecimales: byte): string;
 var xmax,xaux:real;
     i:integer;
@@ -815,13 +893,13 @@ begin
   result:='OK';
 end;
 
-function Togcvdispensarios_wayne.FechaHoraExtToStr(
+function TSQLWReader.FechaHoraExtToStr(
   FechaHora: TDateTime): String;
 begin
   result:=FechaPaq(FechaHora)+' '+FormatDatetime('hh:mm:ss.zzz',FechaHora);
 end;
 
-procedure Togcvdispensarios_wayne.ComandoConsola(ss: string);
+procedure TSQLWReader.ComandoConsola(ss: string);
 var s1:string;
     cc:char;
 begin
@@ -847,7 +925,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.CalculaBCC(ss: string): char;
+function TSQLWReader.CalculaBCC(ss: string): char;
 var xc,cc:char;
     i:integer;
 begin
@@ -859,7 +937,7 @@ begin
   result:=xc;
 end;
 
-procedure Togcvdispensarios_wayne.AgregaLog(lin: string);
+procedure TSQLWReader.AgregaLog(lin: string);
 var lin2:string;
     i:integer;
 begin
@@ -879,7 +957,7 @@ begin
   ListaLog.Add(lin2);
 end;
 
-function Togcvdispensarios_wayne.XorChar(c1, c2: char): char;
+function TSQLWReader.XorChar(c1, c2: char): char;
 var bits1,bits2,bits3:array[0..7] of boolean;
     nn,n1,n2,i,nr:byte;
 begin
@@ -911,7 +989,7 @@ begin
   result:=char(nr);
 end;
 
-function Togcvdispensarios_wayne.EjecutaComando(xCmnd: string): integer;
+function TSQLWReader.EjecutaComando(xCmnd: string): integer;
 var ind:integer;
 begin
   // busca un registro disponible
@@ -945,7 +1023,7 @@ begin
   Result:=FolioCmnd;
 end;
 
-function Togcvdispensarios_wayne.AutorizarVenta(msj: string): string;
+function TSQLWReader.AutorizarVenta(msj: string): string;
 var
   cmd,cantidad,posCarga,comb,finv:string;
 begin
@@ -990,7 +1068,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.DetenerVenta(msj: string): string;
+function TSQLWReader.DetenerVenta(msj: string): string;
 begin
   try
     if StrToIntDef(msj,-1)=-1 then begin
@@ -1005,7 +1083,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.ReanudarVenta(msj: string): string;
+function TSQLWReader.ReanudarVenta(msj: string): string;
 begin
   try
     if StrToIntDef(msj,-1)=-1 then begin
@@ -1020,7 +1098,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.ActivaModoPrepago(msj: string): string;
+function TSQLWReader.ActivaModoPrepago(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -1045,7 +1123,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.DesactivaModoPrepago(msj: string): string;
+function TSQLWReader.DesactivaModoPrepago(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -1070,7 +1148,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.Bloquear(msj: string): string;
+function TSQLWReader.Bloquear(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -1100,7 +1178,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.Desbloquear(msj: string): string;
+function TSQLWReader.Desbloquear(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -1130,7 +1208,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.FinVenta(msj: string): string;
+function TSQLWReader.FinVenta(msj: string): string;
 begin
   try
     if StrToIntDef(msj,-1)=-1 then begin
@@ -1145,7 +1223,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.TransaccionPosCarga(msj: string): string;
+function TSQLWReader.TransaccionPosCarga(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -1170,7 +1248,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.EstadoPosiciones(msj: string): string;
+function TSQLWReader.EstadoPosiciones(msj: string): string;
 var
   xpos:Integer;
 begin
@@ -1196,7 +1274,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.TotalesBomba(msj: string): string;
+function TSQLWReader.TotalesBomba(msj: string): string;
 var
   xpos,xfolioCmnd:Integer;
   valor:string;
@@ -1219,7 +1297,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.Detener: string;
+function TSQLWReader.Detener: string;
 begin
   try
     if estado=-1 then begin
@@ -1242,7 +1320,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.Iniciar: string;
+function TSQLWReader.Iniciar: string;
 begin
   try
     if (not pSerial.Open) then begin
@@ -1254,10 +1332,22 @@ begin
         pSerial.Open:=True;
     end;
 
+    Sleep(100);
+    if (WayneFusion='No')or(MapeoFusion='Si') then begin
+      ComandoConsola('N'+inttoclavenum(MaxPosCarga,2)+ModoPrecioWayne);
+      esperamiliseg(100);
+      ComandoConsola('l1');
+      esperamiliseg(100);
+    end;
+
     detenido:=False;
     estado:=1;
     Timer1.Enabled:=True;
     numPaso:=0;
+
+    if ConfAdic<>'' then
+      FluStd(ConfAdic);
+
     Result:='True|';
   except
     on e:Exception do
@@ -1265,7 +1355,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.Shutdown: string;
+function TSQLWReader.Shutdown: string;
 begin
   if estado>0 then
     Result:='False|El servicio esta en proceso, no fue posible detenerlo|'
@@ -1275,7 +1365,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.Terminar: string;
+function TSQLWReader.Terminar: string;
 begin
   if estado>0 then
     Result:='False|El servicio no esta detenido, no es posible terminar la comunicacion|'
@@ -1291,17 +1381,16 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.ObtenerEstado: string;
+function TSQLWReader.ObtenerEstado: string;
 begin
   Result:='True|'+IntToStr(estado)+'|';
 end;
 
-function Togcvdispensarios_wayne.GuardarLog: string;
+function TSQLWReader.GuardarLog: string;
 begin
   try
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes;
-    GuardaLogComandos;
     Result:='True|'+rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt|';
   except
     on e:Exception do
@@ -1309,7 +1398,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.GuardarLogPetRes: string;
+function TSQLWReader.GuardarLogPetRes: string;
 begin
   try
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
@@ -1320,7 +1409,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.RespuestaComando(msj: string): string;
+function TSQLWReader.RespuestaComando(msj: string): string;
 var
   resp:string;
 begin
@@ -1347,7 +1436,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.ObtenerLog(r: Integer): string;
+function TSQLWReader.ObtenerLog(r: Integer): string;
 var
   i:Integer;
 begin
@@ -1370,7 +1459,7 @@ begin
     Result:=Result+ListaLog[i]+'|';
 end;
 
-function Togcvdispensarios_wayne.ObtenerLogPetRes(r: Integer): string;
+function TSQLWReader.ObtenerLogPetRes(r: Integer): string;
 var
   i:Integer;
 begin
@@ -1393,16 +1482,23 @@ begin
     Result:=Result+ListaLogPetRes[i]+'|';
 end;
 
-function Togcvdispensarios_wayne.ResultadoComando(xFolio: integer): string;
+function TSQLWReader.ResultadoComando(xFolio: integer): string;
 var i:integer;
 begin
-  Result:='*';
-  for i:=1 to 40 do
-    if (TabCmnd[i].folio=xfolio)and(TabCmnd[i].SwResp) then
-      result:=TabCmnd[i].Respuesta;
+  try
+    Result:='*';
+    for i:=1 to 200 do
+      if (TabCmnd[i].folio=xfolio)and(TabCmnd[i].SwResp) then begin
+        result:=TabCmnd[i].Respuesta;
+        Break;
+      end;
+  except
+    on e:Exception do
+      AgregaLog('Excepcion ResultadoComando: '+e.Message);
+  end;
 end;
 
-procedure Togcvdispensarios_wayne.ProcesaLinea;
+procedure TSQLWReader.ProcesaLinea;
 var lin,ss,rsp,descrsp,saux,
     xestado,xmodo,rsp2          :string;
     simp,spre,sval              :string[20];
@@ -1413,10 +1509,15 @@ var lin,ss,rsp,descrsp,saux,
     xLista                      :TStrings;
     SwOk                        :boolean;
     ximporte,xvolumen,
-    xprecio,xprec,
+    xprecio,xprec,xPorcAdic,
     xvalor,ximpo,xvol           :real;
+    segAdic:TDateTime;
 begin
   try
+    if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
+      horaLog:=Now;
+      GuardarLog;
+    end;   
     saux:=LineaTimer;
     if LineaTimer='' then
       exit;
@@ -1456,7 +1557,8 @@ begin
            contact:=0;
            if PreciosInicio then
              IniciarPrecios;
-           for xpos:=1 to length(ss) do if xpos in [1..maxposcarga] then  begin
+           lin:='';xestado:='';xmodo:='';
+           for xpos:=1 to length(ss) do if xpos in [1..maxposcarga] then begin
              with TPosCarga[xpos] do begin
                SwCmndB:=true;
                if estatusant<>estatus then begin
@@ -1527,6 +1629,34 @@ begin
                        for xcomb:=1 to nocomb do
                          AgregaLog('Reconexion de Manguera Pos Carga '+inttostr(xpos)+' / Combustible '+IntToStr(xcomb));
                      end;
+                     if ContAdic=1 then
+                       ContAdic:=3;
+                     if (SwAdic=2) and (ContAdic=3) and (SecondsBetween(segAdic,now)>1) then begin
+                       segAdic:=Now;
+                       if TAdic31[xpos]>0 then
+                         xPorcAdic:=(TAdic31[xpos]/100)
+                       else
+                         xPorcAdic:=0;
+                       if esDiesel then
+                         EjecutaComando('OCL '+IntToStr(xpos)+' '+FloatToStr(964.6+xPorcAdic))
+                       else
+                         EjecutaComando('OCL '+IntToStr(xpos)+' '+FloatToStr(964.5+xPorcAdic));
+                       ContAdic:=2;
+                     end
+                     else if (SwAdic=1) and (ContAdic=3) and (SecondsBetween(segAdic,now)>1) then begin
+                       segAdic:=Now;
+                       if esDiesel then
+                         EjecutaComando('OCL '+IntToStr(xpos)+' 964.60')
+                       else
+                         EjecutaComando('OCL '+IntToStr(xpos)+' 964.50');
+                       ContAdic:=2;
+                     end;
+                   end;
+                   2:begin
+                     if ContAdic=1 then begin
+                       ContAdic:=0;
+                       SwAdic:=0;
+                     end;
                    end;
                  8:begin
                      if estatusant<>8 then
@@ -1547,14 +1677,38 @@ begin
                        ComandoConsola(ss);
                        esperamiliseg(500);
                      end;
+                     if (SwAdic>0) and (ContAdic=3) and (SecondsBetween(segAdic,now)>1) then begin
+                       segAdic:=Now;
+                       EjecutaComando('DVC '+IntToStr(xpos));
+                     end;
+                     if ContAdic=2 then
+                       ContAdic:=1;
                    end;
                end;
                if estatus in [1,2,3,5,9] then
                  inc(contact)
                else if estatus=8 then
                  inc(contstop);
+
+               if not SwDesHabilitado then begin
+                 case estatus of
+                   0:xestado:=xestado+'0'; // Sin Comunicacion
+                   1:xestado:=xestado+'1'; // Inactivo (Idle)
+                   2:xestado:=xestado+'2'; // Cargando (In Use)
+                   3:if not swcargando then
+                       xestado:=xestado+'3' // Fin de Carga (Used)
+                     else
+                       xestado:=xestado+'2';
+                   5:xestado:=xestado+'5'; // Llamando (Calling)
+                   9:xestado:=xestado+'9'; // Autorizado (Calling)
+                   8:xestado:=xestado+'8'; // Detenido (Stoped)
+                   else xestado:=xestado+'0';
+                 end;
+               end
+               else xestado:=xestado+'7'; // Deshabilitado
              end;
            end;
+           LinEstadoGen:=xestado;
            if (contstop>0)and(contact=0) then begin
              if (WayneFusion='No')or(MapeoFusion='Si') then begin
                ComandoConsola('N'+inttoclavenum(MaxPosCarga,2)+ModoPrecioWayne);
@@ -1627,7 +1781,7 @@ begin
                        volumen:=xvolumen;
                        precio:=xprecio;
                      end
-                     else if (ximporte>=importeant-0.05) then begin
+                     else if (ximporte>=importeant-0.1) then begin
                        importe:=ximporte;
                        volumen:=xvolumen;
                        precio:=xprecio;
@@ -1643,12 +1797,14 @@ begin
                      if (swcargando) then begin // FIN DE CARGA
                        swcargando:=false;
                        swdesp:=true;
+                       SwPidiendoTotales:=True;
+                       SwCargaTotales[PosDispActual]:=True;
                      end;
                    end;
                    if (TPosCarga[xpos].finventa=0) then begin
                      if (Estatus=3) then begin // FIN DE CARGA
-                       ComandoConsola('R'+inttoclavenum(xpos,2)+'0');
-                       esperamiliseg(100);
+//                       ComandoConsola('R'+inttoclavenum(xpos,2)+'0');
+//                       esperamiliseg(100);
                        if sw3virtual then begin
                          sw3virtual:=false;
                          finventa:=0;
@@ -1657,6 +1813,8 @@ begin
                        end;
                      end;
                    end;
+                   CombActual:=CombustibleEnPosicion(xpos,PosDispActual);
+                   MangActual:=MangueraEnPosicion(xpos,PosDispActual);
                  end;
                except
                  if estatus<>2 then
@@ -1718,57 +1876,14 @@ begin
         NumPaso:=3;StEsperaPaso3:=0; ContPaso3:=0;
       end;
     end;
-
     if (NumPaso=3) then begin
-      inc(ContPaso3);
-      if ContPaso3>12 then begin
-        ContPaso3:=0;
-      end
-      else begin
-        lin:='';xestado:='';xmodo:='';
-        for xpos:=1 to MaxPosCarga do with TPosCarga[xpos] do begin
-          xmodo:=xmodo+ModoOpera[1];
-          if not SwDesHabilitado then begin
-            case estatus of
-              0:xestado:=xestado+'0'; // Sin Comunicacion
-              1:xestado:=xestado+'1'; // Inactivo (Idle)
-              2:xestado:=xestado+'2'; // Cargando (In Use)
-              3:if not swcargando then
-                  xestado:=xestado+'3' // Fin de Carga (Used)
-                else
-                  xestado:=xestado+'2';
-              5:xestado:=xestado+'5'; // Llamando (Calling)
-              9:xestado:=xestado+'9'; // Autorizado (Calling)
-              8:xestado:=xestado+'8'; // Detenido (Stoped)
-              else xestado:=xestado+'0';
-            end;
-          end
-          else xestado:=xestado+'7'; // Deshabilitado
-          xcomb:=CombustibleEnPosicion(xpos,PosDispActual);
-          CombActual:=xcomb;
-          MangActual:=MangueraEnPosicion(xpos,PosDispActual);
-          ss:=inttoclavenum(xpos,2)+'/'+inttostr(TComb[TPos[PosDispActual]]);
-          ss:=ss+'/'+FormatFloat('###0.##',volumen);
-          ss:=ss+'/'+FormatFloat('#0.##',precio);
-          ss:=ss+'/'+FormatFloat('####0.##',importe);
-          lin:=lin+'#'+ss;
-        end;
-        if lin='' then
-          lin:=xestado+'#'
-        else
-          lin:=xestado+lin;
-        lin:=lin+'&'+xmodo;
-        LinEstadoGen:=xestado;
-      end;
       NumPaso:=4;
-    end;
-    if (NumPaso=4) then begin
-      NumPaso:=5;
       if PosicionCargaActual2>=MaxPosCarga then
         PosicionCargaActual2:=0;
     end;
-    if NumPaso=5 then begin // TOTALES
+    if NumPaso=4 then begin // TOTALES
       if PosicionCargaActual2<=MaxPosCarga then begin
+        PosicionCargaActual2:=0;
         repeat
           if PosicionCargaActual2=0 then begin
             PosicionCargaActual2:=1;
@@ -1793,7 +1908,7 @@ begin
             end;
           end
           else begin
-            NumPaso:=6;
+            NumPaso:=5;
             PrecioCombActual:=0;
           end;
         until (PosicionCargaActual2>MaxPosCarga);
@@ -1811,7 +1926,7 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_wayne.pSerialTriggerAvail(CP: TObject;
+procedure TSQLWReader.pSerialTriggerAvail(CP: TObject;
   Count: Word);
 var I:Word;
     C,xbcc:Char;
@@ -1866,7 +1981,7 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_wayne.MapeaPosicion(xpos: integer);
+procedure TSQLWReader.MapeaPosicion(xpos: integer);
 var xcomb,xpr:integer;
     ss:string;
 begin
@@ -1877,10 +1992,8 @@ begin
       ss:=ss+mapa;
     end
     else begin
-      for xpr:=1 to nocomb do begin
-        xcomb:=CombustibleEnPosicion(xpos,xpr);
-        ss:=ss+IntToStr(TPosCarga[xpos].TPos[xcomb]);
-      end;
+      for xpr:=1 to nocomb do
+        ss:=ss+IntToStr(CombustibleEnPosicion(xpos,xpr)); 
     end;
     while length(ss)<10 do
       ss:=ss+'0';
@@ -1888,7 +2001,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.CombustibleEnPosicion(xpos,
+function TSQLWReader.CombustibleEnPosicion(xpos,
   xposcarga: integer): integer;
 var i:integer;
 begin
@@ -1901,10 +2014,10 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_wayne.Timer1Timer(Sender: TObject);
+procedure TSQLWReader.Timer1Timer(Sender: TObject);
 var ss,rsp,str1:string;
     i,xpos,xp,xcomb,xfolio,tag3,
-    xcmnd:integer;
+    xcmnd,sumAdi:integer;
     xlimite,
     xprecio:real;
     swok,swerr,swAllTotals:boolean;
@@ -1929,7 +2042,7 @@ begin
     // Checa comandos
     if SwComandoB then begin
       SwComandoB:=false;
-      for xcmnd:=1 to 40 do if (TabCmnd[xcmnd].SwActivo and not TabCmnd[xcmnd].SwResp) then begin
+      for xcmnd:=1 to 200 do if (TabCmnd[xcmnd].SwActivo and not TabCmnd[xcmnd].SwResp) then begin
         SwAplicaCmnd:=true;
         rsp:='';
         ss:=ExtraeElemStrSep(TabCmnd[xcmnd].Comando,1,' ');
@@ -1994,7 +2107,7 @@ begin
                     SnLitros:=0;
                     TPosCarga[SnPosCarga].swarosmag:=false;
                     if rsp='OK' then
-                      EnviaPreset(0,rsp);
+                      EnviaPreset(xcomb,rsp);
                   end
                   else rsp:='Combustible no existe en esta posicion';
                 end;
@@ -2063,7 +2176,7 @@ begin
                     TPosCarga[SnPosCarga].finventa:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,6,' '),0);
                     TPosCarga[SnPosCarga].swarosmag:=false;
                     if rsp='OK' then
-                      EnviaPreset(0,rsp);
+                      EnviaPreset(xcomb,rsp);
                   end
                   else rsp:='Combustible no existe en esta posicion';
                 end;
@@ -2137,8 +2250,8 @@ begin
           xpos:=strtointdef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '),0);
           SwAplicaCmnd:=False;
           with TPosCarga[xpos] do begin
-            if TabCmnd[xcmnd].SwNuevo then begin
-              swAllTotals:=False;
+            if (TabCmnd[xcmnd].SwNuevo) and (not SwPidiendoTotales) then begin
+              AgregaLog('TOTALES EN TODAS LAS MANGUERAS');
               SwCargaTotales[1]:=true;
               SwCargaTotales[2]:=true;
               SwCargaTotales[3]:=true;
@@ -2157,10 +2270,55 @@ begin
                 rsp:='OK'+FormatFloat('0.000',ToTalLitros[1])+'|'+FormatoMoneda(ToTalLitros[1]*LPrecios[1])+'|'+
                                 FormatFloat('0.000',ToTalLitros[2])+'|'+FormatoMoneda(ToTalLitros[2]*LPrecios[2])+'|'+
                                 FormatFloat('0.000',ToTalLitros[3])+'|'+FormatoMoneda(ToTalLitros[3]*LPrecios[3])+'|';
+                SwPidiendoTotales:=False;
                 SwAplicaCmnd:=True;
               end;
             end;
           end;
+        end
+        else if ss='FLUSTD' then begin
+          if Licencia3Ok then begin
+            for xpos:=1 to MaxPosCarga do begin
+              TPosCarga[xpos].swAdic:=2;
+              TPosCarga[xpos].ContAdic:=3
+            end;
+            rsp:='OK';
+          end
+          else
+            rsp:='Opcion no Habilitada';
+        end
+        else if ss='FLUMIN' then begin
+          if Licencia3Ok then begin
+            for xpos:=1 to MaxPosCarga do begin
+              TPosCarga[xpos].swAdic:=1;
+              TPosCarga[xpos].ContAdic:=3
+            end;
+            SwEspMin:=True;
+            rsp:='OK';
+          end
+          else
+            rsp:='Opcion no Habilitada';
+        end
+        else if ss='SIMADI' then begin
+          for xpos:=1 to MaxPosCarga do
+            TPosCarga[xpos].swAdic:=0;
+          rsp:='OK';
+        end
+        else if ss='ESTADI' then begin
+          for xpos:=1 to MaxPosCarga do
+            sumAdi:=sumAdi+TPosCarga[xpos].swAdic;
+
+          if sumAdi=0 then begin
+            rsp:='OK';
+            if SwEspMin then begin
+              GuardarLog;
+              Detener;
+              Shutdown;
+              Terminar;
+            end;
+          end
+          else
+            rsp:='Comandos en proceso';
         end
         else rsp:='Comando no Soportado o no Existe';
         TabCmnd[xcmnd].SwNuevo:=false;
@@ -2183,7 +2341,7 @@ begin
           exit;
         end;
       end;
-      if NumPaso=5 then begin // si esta en espera de respuesta ACK
+      if NumPaso=4 then begin // si esta en espera de respuesta ACK
         inc(ContEsperaPaso5);     // espera hasta 5 ciclos
         if ContEsperaPaso5>5 then begin
           ContEsperaPaso5:=0;
@@ -2192,7 +2350,7 @@ begin
           exit;
         end;
       end;
-      if NumPaso=6 then begin // si esta en espera de respuesta ACK
+      if NumPaso=5 then begin // si esta en espera de respuesta ACK
         inc(ContEsperaPaso6);     // espera hasta 5 ciclos
         if ContEsperaPaso6>3 then begin
           ContEsperaPaso6:=0;
@@ -2251,7 +2409,7 @@ begin
   end;
 end;
 
-function Togcvdispensarios_wayne.PosicionDeCombustible(xpos,
+function TSQLWReader.PosicionDeCombustible(xpos,
   xcomb: integer): integer;
 var i:integer;
 begin
@@ -2267,7 +2425,7 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_wayne.EnviaPreset(xcomb: integer;
+procedure TSQLWReader.EnviaPreset(xcomb: integer;
   var rsp: string);
 var ss,sval:string;
     i,ndig,xpos,nc:integer;
@@ -2276,78 +2434,76 @@ begin
   if SoportaSeleccionProducto<>'Si' then
     xcomb:=0;
   swlitros:=SnLitros>0.01;
-  if not (SnPosCarga in [1..MaxPosCarga]) then begin
-    rsp:='Posicion de Carga no Existe';
+  if not (SnPosCarga in [1..MaxPosCarga]) then
     exit;
-  end;
   rsp:='OK';
   xpos:=SnPosCarga;
   if not (TPosCarga[xpos].estatus in [1,5,9]) then begin
-    rsp:='Posicion no Disponible';
+    rsp:='Posición no Disponible';
     exit;
   end;
   if TPosCarga[xpos].SwDesHabilitado then begin
-    rsp:='Posicion Deshabilitada';
+    rsp:='Posición Deshabilitada';
     exit;
   end;
   if TPosCarga[xpos].estatus=9 then begin
     ComandoConsola('E'+IntToClaveNum(xpos,2));
-    esperamiliseg(500);
+    esperamiliseg(300);
   end;
-  if SnImporte>=99999 then
-    ss:='S'+IntToClaveNum(SnPosCarga,2)+'00'
-  else begin
-    ss:='P'+IntToClaveNum(SnPosCarga,2);
-    if not swlitros then begin // pesos
-      TPosCarga[xpos].importe_aros:=SnImporte;
-      ss:=ss+'0';
-      ss:=ss+'0'; //IntToStr(TPosCarga[SnPosCarga].TPrec[1]);   // 1-contado 0,2-credito
-      if DecimalesPresetWayne=0 then
-        sval:=FiltraStrNum(FormatFloat('00000000',SnImporte))
-      else if DecimalesPresetWayne=1 then
-        sval:=FiltraStrNum(FormatFloat('0000000.0',SnImporte))
-      else if DecimalesPresetWayne=2 then
-        sval:=FiltraStrNum(FormatFloat('000000.00',SnImporte))
-      else if DecimalesPresetWayne=3 then
-        sval:=FiltraStrNum(FormatFloat('00000.000',SnImporte))
-      else begin
-        sval:=FiltraStrNum(FormatFloat('000000.00',SnImporte));
-        if TPosCarga[SnPosCarga].tdigpreset[1]>=0 then
-          ndig:=TPosCarga[SnPosCarga].tdigpreset[1]
-        else
-          ndig:=TPosCarga[SnPosCarga].tdiga[1];
-        if ndig>0 then begin
-          sval:=IntToClaveNum(0,ndig)+sval;
-          sval:=copy(sval,1,8);
-        end;
+  ss:='s'+IntToClaveNum(SnPosCarga,2);
+  if not swlitros then begin // pesos
+    TPosCarga[xpos].importe_aros:=SnImporte;
+    ss:=ss+'0';
+    ss:=ss+IntToStr(TPosCarga[SnPosCarga].TPrec[1]);   // 1-contado 0,2-credito
+    if DecimalesPresetWayne=0 then
+      sval:=FiltraStrNum(FormatFloat('00000000',SnImporte))
+    else if DecimalesPresetWayne=1 then
+      sval:=FiltraStrNum(FormatFloat('0000000.0',SnImporte))
+    else if DecimalesPresetWayne=2 then
+      sval:=FiltraStrNum(FormatFloat('000000.00',SnImporte))
+    else if DecimalesPresetWayne=3 then
+      sval:=FiltraStrNum(FormatFloat('00000.000',SnImporte))
+    else begin
+      sval:=FiltraStrNum(FormatFloat('000000.00',SnImporte));
+      if TPosCarga[SnPosCarga].tdigpreset[1]>=0 then
+        ndig:=TPosCarga[SnPosCarga].tdigpreset[1]
+      else
+        ndig:=TPosCarga[SnPosCarga].tdiga[1];
+      if ndig>0 then begin
+        sval:=IntToClaveNum(0,ndig)+sval;
+        sval:=copy(sval,1,8);
       end;
-      ss:=ss+sval;
-    end
-    else begin // litros
-      ss:=ss+'1';
-      ss:=ss+'0'; //IntToStr(TPosCarga[SnPosCarga].TPrec[1]);   // 1-contado 0,2-credito
-      case DecimalesPresetWayneLitros of
-        1:sval:=FiltraStrNum(FormatFloat('0000000.0',SnLitros)); //saux:='0000000.0';
-        2:sval:=FiltraStrNum(FormatFloat('000000.00',SnLitros)); //saux:='000000.00';
-        3:sval:=FiltraStrNum(FormatFloat('00000.000',SnLitros)); //saux:='00000.000';
-        4:sval:=FiltraStrNum(FormatFloat('0000.0000',SnLitros)); //saux:='0000.0000';
-      end;
-      ss:=ss+sval;
     end;
-    if xcomb>0 then begin
-      i:=PosiciondeCombustible(xpos,xcomb);
-      ss:=ss+inttostr(i);
-    end
-    else
-      ss:=ss+'0';
+    ss:=ss+sval;
+  end
+  else begin // litros
+    ss:=ss+'1';
+    ss:=ss+IntToStr(TPosCarga[SnPosCarga].TPrec[1]);   // 1-contado 0,2-credito
+    case DecimalesPresetWayneLitros of
+      1:sval:=FiltraStrNum(FormatFloat('0000000.0',SnLitros)); //saux:='0000000.0';
+      2:sval:=FiltraStrNum(FormatFloat('000000.00',SnLitros)); //saux:='000000.00';
+      3:sval:=FiltraStrNum(FormatFloat('00000.000',SnLitros)); //saux:='00000.000';
+      4:sval:=FiltraStrNum(FormatFloat('0000.0000',SnLitros)); //saux:='0000.0000';
+    end;
+    ss:=ss+sval;
   end;
-
-  TPosCarga[xpos].HoraOcc:=now;
+  if xcomb>0 then begin
+    nc:=TPosCarga[SnPosCarga].NoComb;
+    i:=0;
+    repeat
+      inc(i);
+    until (CombustibleEnPosicion(xpos,i)=xcomb)or(i>nc);
+    if i>nc then
+      ss:=ss+'0'+'0'
+    else
+      ss:=ss+inttostr(i)+'0';
+  end
+  else
+    ss:=ss+'0'+'0';
   ComandoConsola(ss);
-  esperamiliseg(100);
 end;
 
-function Togcvdispensarios_wayne.MangueraEnPosicion(xpos,
+function TSQLWReader.MangueraEnPosicion(xpos,
   xposcarga: integer): integer;
 var i:integer;
 begin
@@ -2360,7 +2516,7 @@ begin
   end;
 end;
 
-procedure Togcvdispensarios_wayne.IniciarPrecios;
+procedure TSQLWReader.IniciarPrecios;
 var
   xpos,i:Integer;
   ss:String;
@@ -2384,7 +2540,7 @@ begin
   PreciosInicio:=False;
 end;
 
-procedure Togcvdispensarios_wayne.GuardaLogComandos;
+procedure TSQLWReader.GuardaLogComandos;
 var
   i:Integer;
 begin
@@ -2404,7 +2560,7 @@ begin
 
 end;
 
-function Togcvdispensarios_wayne.ExtraeElemStrEnter(xstr: string;
+function TSQLWReader.ExtraeElemStrEnter(xstr: string;
   ind: word): string;
 var i,cont,nc:word;
     ss:string;
@@ -2428,7 +2584,7 @@ begin
   result:=limpiastr(ss);
 end;
 
-function Togcvdispensarios_wayne.NoElemStrEnter(xstr: string): word;
+function TSQLWReader.NoElemStrEnter(xstr: string): word;
 var i,cont,nc:word;
 begin
   xstr:=xstr+' ';
@@ -2442,6 +2598,52 @@ begin
     inc(i);
   end;
   result:=cont;
+end;
+
+function TSQLWReader.FluMin: string;
+begin
+  if Licencia3Ok then begin
+    try
+      Result:='True|'+IntToStr(EjecutaComando('FLUMIN'));
+    except
+      on e:Exception do
+        Result:='False|Error FLUMIN: '+e.Message;
+    end;
+  end
+  else
+    Result:='False|Licencia CVL7 invalida';
+end;
+
+function TSQLWReader.FluStd(msj: string): string;
+var
+  i:Integer;
+  flujo:Double;
+  config:TIniFile;  
+begin
+  if Licencia3Ok then begin
+    try
+      AgregaLog('MensajeX: '+msj);
+
+      config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
+      config.WriteString('CONF','ConfAdic',msj);
+      config:=nil;
+
+      for i:=1 to NoElemStrSep(msj,';') do begin
+        flujo:=StrToFloatDef(ExtraeElemStrSep(msj,i,';'),0);
+        if flujo>0 then begin
+          TAdic31[i]:=flujo;
+          AgregaLog('Flu Pos '+IntToStr(i)+': '+FloatToStr(TAdic31[i]));
+        end;
+      end;
+
+      Result:='True|'+IntToStr(EjecutaComando('FLUSTD'))+'|';
+    except
+      on e:Exception do
+        Result:='False|Error FLUSTD: '+e.Message+'|';
+    end;
+  end
+  else
+    Result:='False|Licencia CVL7 invalida|';
 end;
 
 end.

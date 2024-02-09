@@ -65,6 +65,8 @@ type
     SwEsperaRsp  :boolean;
     ContEsperaRsp:integer;
     FolioCmnd   :integer;
+    horaLog:TDateTime;
+    minutosLog:Integer;
     function GetServiceController: TServiceController; override;
     procedure AgregaLog(lin:string);
     procedure AgregaLogPetRes(lin: string);
@@ -231,7 +233,7 @@ var
 
 implementation
 
-uses StrUtils, TypInfo, Math;
+uses StrUtils, TypInfo, Math, DateUtils;
 
 {$R *.DFM}
 
@@ -259,6 +261,7 @@ begin
     rutaLog:=config.ReadString('CONF','RutaLog','C:\ImagenCo');
     ServerSocket1.Port:=config.ReadInteger('CONF','Puerto',8585);
     licencia:=config.ReadString('CONF','Licencia','');
+    minutosLog:=StrToInt(config.ReadString('CONF','MinutosLog','0'));
     ContadorAlarma:=0;
     ListaCmnd:=TStringList.Create;
     SwEsperaRsp:=false;
@@ -266,6 +269,7 @@ begin
     detenido:=True;
     estado:=-1;
     SegundosFinv:=30;
+    horaLog:=Now;
     ListaLog:=TStringList.Create;
     ListaLogPetRes:=TStringList.Create;
     ListaComandos:=TStringList.Create;
@@ -292,7 +296,7 @@ begin
     end;
 
     if not Licencia3Ok then
-      ListaLog.Add('Datos Licencia: '+razonSocial+'-'+licAdic+'-'+BoolToStr(esLicTemporal)+'-'+DateToStr(fechaVenceLic));
+      ListaLog.Add('Datos Licencia CVL7 invalida: '+razonSocial+'-'+licAdic+'-'+BoolToStr(esLicTemporal)+'-'+DateToStr(fechaVenceLic));
 
     CoInitialize(nil);
     Key:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
@@ -331,6 +335,7 @@ procedure TSQLBReader.ServerSocket1ClientRead(Sender: TObject;
     metodoEnum:TMetodos;
 begin
   mensaje:=Socket.ReceiveText;
+  AgregaLogPetRes('R '+mensaje);
   if StrToIntDef(mensaje,-99) in [0,1] then begin
     pSerial.Open:=mensaje='1';
     Socket.SendText('1');
@@ -338,8 +343,6 @@ begin
   end;
   if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))='DISPENSERSX' then begin
     try
-      AgregaLogPetRes('R '+mensaje);
-
       if NoElemStrSep(mensaje,'|')>=2 then begin
 
         comando:=UpperCase(ExtraeElemStrSep(mensaje,2,'|'));
@@ -379,8 +382,6 @@ begin
   end
   else begin
     try
-      mensaje:=Key.Decrypt(ExtractFilePath(ParamStr(0)),key3DES,mensaje);
-      AgregaLogPetRes('R '+mensaje);
       for i:=1 to Length(mensaje) do begin
         if mensaje[i]=#2 then begin
           mensaje:=Copy(mensaje,i+1,Length(mensaje));
@@ -476,9 +477,9 @@ begin
           RESPCMND_e:
             Responder(Socket, 'DISPENSERS|RESPCMND|'+RespuestaComando(parametro));
           LOG_e:
-            Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOG|'+ObtenerLog(StrToIntDef(parametro, 0))));
+            Socket.SendText('DISPENSERS|LOG|'+ObtenerLog(StrToIntDef(parametro, 0)));
           LOGREQ_e:
-            Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOGREQ|'+ObtenerLogPetRes(StrToIntDef(parametro, 0))));
+            Socket.SendText('DISPENSERS|LOGREQ|'+ObtenerLogPetRes(StrToIntDef(parametro, 0)));
         else
           Responder(Socket, 'DISPENSERS|'+comando+'|False|Comando desconocido|');
         end;
@@ -500,7 +501,7 @@ end;
 
 procedure TSQLBReader.Responder(socket:TCustomWinSocket;resp:string);
 begin
-  socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)),key3DES,#1#2+resp+#3+CRC16(resp)+#23));
+  socket.SendText(#1#2+resp+#3+CRC16(resp)+#23);
   AgregaLogPetRes('E '+#1#2+resp+#3+CRC16(resp)+#23);
 end;
 
@@ -828,6 +829,10 @@ var lin,ss,ss2,rsp,rsp2,
     totlts:array[1..4] of real;
     SnImporteStr,SnLitrosStr,decImporteStr:String;
 begin
+  if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
+    horaLog:=Now;
+    GuardarLog;
+  end;
   if (LineaTimer='') then
     exit;
   SwEsperaRsp:=false;

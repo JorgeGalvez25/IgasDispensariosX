@@ -1,6 +1,6 @@
-object ogcvdispensarios_wayne: Togcvdispensarios_wayne
+object SQLWReader: TSQLWReader
   OldCreateOrder = False
-  DisplayName = 'OpenGas Dispensarios'
+  DisplayName = 'SQL Server VSS Reader'
   OnExecute = ServiceExecute
   Left = 326
   Top = 392
