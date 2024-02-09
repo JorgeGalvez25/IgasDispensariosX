@@ -11,7 +11,7 @@ uses
   IdHashMessageDigest in 'IdHashMessageDigest.pas',
   IdHash in 'IdHash.pas',
   OG_Hasp in 'OG_Hasp.pas',
-  UIGASWAYNE in 'UIGASWAYNE.pas' {ogcvdispensarios_wayne: TService},
+  UIGASWAYNE in 'UIGASWAYNE.pas' {SQLWReader: TService},
   UIGASHONGYANG in 'UIGASHONGYANG.pas' {ogcvdispensarios_hongyang: TService},
   ULIBLICENCIAS in 'ULIBLICENCIAS.pas',
   UIGASGILBARCO in 'UIGASGILBARCO.pas' {SQLGReader: TService},
@@ -28,7 +28,7 @@ begin
   marca:=StrToInt(config.ReadString('CONF','Marca','0'));
   case marca of
     1:
-      Application.CreateForm(Togcvdispensarios_wayne, ogcvdispensarios_wayne);
+      Application.CreateForm(TSQLWReader, SQLWReader);
     2:
       Application.CreateForm(TSQLBReader, SQLBReader);
     4:
