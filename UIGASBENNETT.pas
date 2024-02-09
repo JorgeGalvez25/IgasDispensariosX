@@ -296,7 +296,7 @@ begin
     end;
 
     if not Licencia3Ok then
-      ListaLog.Add('Datos Licencia: '+razonSocial+'-'+licAdic+'-'+BoolToStr(esLicTemporal)+'-'+DateToStr(fechaVenceLic));
+      ListaLog.Add('Datos Licencia CVL7 invalida: '+razonSocial+'-'+licAdic+'-'+BoolToStr(esLicTemporal)+'-'+DateToStr(fechaVenceLic));
 
     CoInitialize(nil);
     Key:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
@@ -829,6 +829,10 @@ var lin,ss,ss2,rsp,rsp2,
     totlts:array[1..4] of real;
     SnImporteStr,SnLitrosStr,decImporteStr:String;
 begin
+  if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
+    horaLog:=Now;
+    GuardarLog;
+  end;
   if (LineaTimer='') then
     exit;
   SwEsperaRsp:=false;
@@ -1918,10 +1922,6 @@ end;
 procedure TSQLBReader.Timer1Timer(Sender: TObject);
 begin
   try
-    if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
-      horaLog:=Now;
-      GuardarLog;
-    end;  
     if not SwEsperaRsp then begin // NO HAY COMANDOS EN PROCESO
       ComandoConsola('B00');
     end

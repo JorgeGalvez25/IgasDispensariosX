@@ -378,7 +378,7 @@ begin
     end;
 
     if not Licencia3Ok then
-      ListaLog.Add('Datos Licencia: '+razonSocial+'-'+licAdic+'-'+BoolToStr(esLicTemporal)+'-'+DateToStr(fechaVenceLic));
+      ListaLog.Add('Datos Licencia CVL7 invalida: '+razonSocial+'-'+licAdic+'-'+BoolToStr(esLicTemporal)+'-'+DateToStr(fechaVenceLic));
 
     while not Terminated do
       ServiceThread.ProcessRequests(True);
@@ -1631,7 +1631,7 @@ end;
 
 function TSQLGReader.AgregaPosCarga(
   posiciones: TlkJSONbase): string;
-var i,j,k,xisla,xpos,xcomb,xnum:integer;
+var i,j,k,xpos,xcomb,xnum:integer;
   dataPos:string;
   existe:boolean;
   mangueras:TlkJSONbase;
@@ -1945,6 +1945,10 @@ var ss,rsp,ss2,precios       :string;
     precioComb:Double;
 begin
   try
+    if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
+      horaLog:=Now;
+      GuardarLog;
+    end;
     // Checa Comandos
     for xcmnd:=1 to 40 do begin
       if (TabCmnd[xcmnd].SwActivo)and(not TabCmnd[xcmnd].SwResp) then begin
@@ -2333,10 +2337,6 @@ var xvolumen,n1,n2,n3:real;
     xcomb,xpos,xp,xgrade,i,xsuma:integer;
     xtotallitros:array[1..4] of real;
 begin
-  if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
-    horaLog:=Now;
-    GuardarLog;
-  end;
   if ContadorAlarma>=10 then begin
     if ContadorAlarma=10 then
       AgregaLog('Error Comunicacion Dispensarios');
