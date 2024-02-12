@@ -174,6 +174,7 @@ type
        swautorizada,
        swautorizando,
        swcargando:boolean;
+       swAvanzoVenta:boolean;
        SwActivo,
        SwOCC,SwCmndB,
        SwPidiendoTotales,
@@ -252,7 +253,7 @@ var
 
 implementation
 
-uses StrUtils, TypInfo, DateUtils;
+uses StrUtils, TypInfo, DateUtils, Math;
 
 {$R *.DFM}
 
@@ -310,7 +311,7 @@ begin
     end;
 
     if not Licencia3Ok then
-      ListaLog.Add('Datos Licencia: '+razonSocial+'-'+licAdic+'-'+BoolToStr(esLicTemporal)+'-'+DateToStr(fechaVenceLic));
+      ListaLog.Add('Datos Licencia CVL7 invalida: '+razonSocial+'-'+licAdic+'-'+BoolToStr(esLicTemporal)+'-'+DateToStr(fechaVenceLic));
 
     CoInitialize(nil);
     Key:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
@@ -755,6 +756,10 @@ var lin,ss,rsp,ss2,
     swerr,SwAplicaMapa,swAllTotals,SwFlu:boolean;
     SnImporteStr,SnLitrosStr,decImporteStr:String;
 begin
+  if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
+    horaLog:=Now;
+    GuardarLog;
+  end;
   if LineaTimer='' then
     exit;
   SwEsperaRsp:=false;
@@ -926,6 +931,7 @@ begin
                      //IniciaCarga:=true;
                      SwCargando:=true;
                      SwPidiendoTotales:=False;
+                     SwDesp:=False;
                    end;
                  3:begin
                      descestat:='Fin de Venta';       // EOT
@@ -1091,7 +1097,9 @@ begin
                  precio:=0;
                  CombActual:=0;
                  PosActual:=0;
-                 MangActual:=0;                 
+                 MangActual:=0;
+                 if not swAvanzoVenta then
+                   swAvanzoVenta:=importe>0;
                end
                else if lin[4]='\' then begin // POSICION NO MAPEADA
                  for i:=1 to nocomb do
@@ -1140,15 +1148,15 @@ begin
                        importe:=importe/10;
                      if (2*importe<volumen*precio) then
                        importe:=importe*10;
-                     (*
-                     if DMCONS.AjustePAM='Si' then begin
-                       ximporte:=AjustaFloat(volumen*precio,2);
-                       if abs(importe-ximporte)>=0.015 then
-                         importe:=ximporte;
+
+                     if not swAvanzoVenta then begin
+                       swAvanzoVenta:=(importe<>importeant) and (SwCargando) and (importe>0) and ((importeant>0) or (importe-importeant<IfThen(xcomb=3,80,40)));
+                       AgregaLog(ifthen(swAvanzoVenta,'swAvanzoVenta','NOT')+' Estatus='+IntToStr(Estatus)+' ImporteAnt: '+FloatToStr(importeant)+' Importe: '+FloatToStr(importe));
                      end;
-                       *)
-                     if (Estatus=3)and(SwCargando) then begin// EOT
+
+                     if (swAvanzoVenta) and (Estatus in [1,3,5,9]) and (SwCargando) then begin// EOT
                        SwCargando:=false;
+                       swAvanzoVenta:=False;
                        swdesp:=true;
                        SwPidiendoTotales:=True;
                        SwTotales[PosActual]:=True;
@@ -1633,7 +1641,7 @@ begin
           xpos:=strtointdef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '),0);
           SwAplicaCmnd:=False;
           with TPosCarga[xpos] do begin
-            if TabCmnd[xcmnd].SwNuevo then begin
+            if (TabCmnd[xcmnd].SwNuevo) and (not SwPidiendoTotales) then begin
               AgregaLog('TOTALES EN TODAS LAS MANGUERAS');
               SwTotales[1]:=true;
               SwTotales[2]:=true;
@@ -1649,10 +1657,11 @@ begin
                 end;
               end;
 
-              if (SwPidiendoTotales) and (SecondsBetween(Now,TabCmnd[xcmnd].hora)>=3) and (not swAllTotals) then begin
+              if (SwPidiendoTotales) and (SwTotales[PosActual]) and (SwDesp) and (SecondsBetween(Now,TabCmnd[xcmnd].hora)>=3) and (not swAllTotals) then begin
                 ToTalLitros[PosActual]:=ToTalLitros[PosActual]+volumen;
+                SwTotales[PosActual]:=False;
                 swAllTotals:=True;
-                SwPidiendoTotales:=False;
+                SwDesp:=False;
               end;
 
               if swAllTotals then begin
@@ -2394,10 +2403,6 @@ var ss:string;
 //    i:integer;
 begin
   try
-    if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
-      horaLog:=Now;
-      GuardarLog;
-    end;
     if NumPaso>4 then
       NumPaso:=0;    
     if NumPaso>1 then begin
@@ -2613,7 +2618,6 @@ begin
   try
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes;
-    GuardaLogComandos;
     Result:='True|'+rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt|';
   except
     on e:Exception do
