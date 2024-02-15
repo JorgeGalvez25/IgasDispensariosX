@@ -64,6 +64,7 @@ type
     DecimalesGilbarco :Integer;
     DigGilbarco :Integer;
     TipoClb: String;
+    ConfAdic:String;
 
     GtwDivPresetLts,        // Divisor preset litros           **
     GtwDivPresetPesos,      // Divisor preset pesos            **
@@ -84,7 +85,7 @@ type
     function GetServiceController: TServiceController; override;
     procedure AgregaLog(lin:string);
     procedure AgregaLogPetRes(lin: string);
-    procedure Responder(socket:TCustomWinSocket;resp:string);
+    procedure Responder(socket:TCustomWinSocket;resp:string;adic:Boolean=False);
     function FechaHoraExtToStr(FechaHora:TDateTime):String;
     function CRC16(Data: string): string;
     function GuardarLog:string;
@@ -248,6 +249,7 @@ var
   Tagx        :array[1..3] of integer;
   Swflu       :boolean;
   StFlu,PosFlu:integer;
+  SwEspMinimo:Boolean;
   EstatusAct,EstatusAnt  :string;
   Licencia3Ok  :Boolean;
 
@@ -341,6 +343,8 @@ begin
     ServerSocket1.Port:=config.ReadInteger('CONF','Puerto',1001);
     licencia:=config.ReadString('CONF','Licencia','');
     minutosLog:=StrToInt(config.ReadString('CONF','MinutosLog','0'));
+    TipoClb:=config.ReadString('CONF','TipoClb','1');
+    ConfAdic:=config.ReadString('CONF','ConfAdic','');
     ListaCmnd:=TStringList.Create;
     ServerSocket1.Active:=True;
     detenido:=True;
@@ -430,15 +434,15 @@ begin
 
         case metodoEnum of
           EJECCMND_e:
-            Socket.SendText('DISPENSERSX|EJECCMND|True|'+IntToStr(EjecutaComando(parametro))+'|');
+            Responder(Socket,'DISPENSERSX|EJECCMND|True|'+IntToStr(EjecutaComando(parametro))+'|',True);
           FLUSTD_e:
-            Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro));
+            Responder(Socket,'DISPENSERSX|FLUSTD|'+FluStd(parametro),True);
           FLUMIN_e:
-            Socket.SendText('DISPENSERSX|FLUMIN|'+FluMin);
+            Responder(Socket,'DISPENSERSX|FLUMIN|'+FluMin,True);
           RESPCMND_e:
-            Socket.SendText('DISPENSERSX|RESPCMND|'+RespuestaComando(parametro));
+            Responder(Socket,'DISPENSERSX|RESPCMND|'+RespuestaComando(parametro),True);
         else
-          Socket.SendText('DISPENSERSX|'+comando+'|False|Comando desconocido|');
+          Responder(Socket,'DISPENSERSX|'+comando+'|False|Comando desconocido|',True);
         end;
       end
       else
@@ -614,10 +618,16 @@ begin
 end;
 
 procedure TSQLGReader.Responder(socket: TCustomWinSocket;
-  resp: string);
+  resp: string;adic:Boolean=False);
 begin
-  socket.SendText(#1#2+resp+#3+CRC16(resp)+#23);
-  AgregaLogPetRes('E '+#1#2+resp+#3+CRC16(resp)+#23);
+  if adic then begin
+    socket.SendText(resp);
+    AgregaLogPetRes('E '+resp);
+  end
+  else begin
+    socket.SendText(#1#2+resp+#3+CRC16(resp)+#23);
+    AgregaLogPetRes('E '+#1#2+resp+#3+CRC16(resp)+#23);
+  end;
 end;
 
 function TSQLGReader.FechaHoraExtToStr(
@@ -804,6 +814,10 @@ begin
     PosCiclo:=1;
     swespera:=False;
     Timer1.Enabled:=True;
+
+    if ConfAdic<>'' then
+      FluStd(ConfAdic);
+
     Result:='True|';
   except
     on e:Exception do
@@ -952,7 +966,7 @@ begin
         resp:=copy(resp,3,Length(resp)-2)
       else
         resp:='';
-      Result:='True|'+resp;
+      Result:='True|'+resp+'|';
     end
     else
       Result:='False|'+resp+'|';
@@ -1829,8 +1843,6 @@ begin
 
     dispensarios := js.Field['Dispensers'];
 
-    TipoClb:='1';
-
     DecimalesGilbarco:=2;
     DigGilbarco:=6;
     GtwDivPresetLts:=100;
@@ -1866,9 +1878,7 @@ begin
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWTIMEOUT' then
         GtwTimeout:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),1000)
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWTIEMPOCMND' then
-        GtwTiempoCmnd:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),100)
-      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='TIPOCLB' then
-        TipoClb:=ExtraeElemStrSep(variable,2,'=');
+        GtwTiempoCmnd:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),100);
     end;
 
     Result:=AgregaPosCarga(dispensarios);
@@ -1957,24 +1967,39 @@ begin
         AgregaLog(TabCmnd[xcmnd].Comando);
         // CMND: FLU ON
         if ss='FLUSTD' then begin
-          rsp:='OK';
+          if (StFlu>0) and (TipoClb<>'2') then
+            rsp:='Comandos Flu en proceso'
+          else begin
+            rsp:='OK';
 
-          case TipoClb[1] of
-           '2':begin  // Por posicion de carga
-                 for xpos:=1 to MaxPosCarga do
-                   TPosCarga[xpos].StFluPos:=1;
-               end;
-          else begin  // General
-                 StFlu:=1;
-               end;
+            case TipoClb[1] of
+             '2':begin  // Por posicion de carga
+                   for xpos:=1 to MaxPosCarga do
+                     TPosCarga[xpos].StFluPos:=1;
+                 end;
+            else begin  // General
+                   StFlu:=1;
+                 end;
+            end;
           end;
         end
 //        // CMND: FLU OFF
         else if ss='FLUMIN' then begin
-          rsp:='OK';
-          StFlu:=11;
-          for xpos:=1 to MaxPosCarga do
-            TPosCarga[xPos].StFluPos:=11;
+          SwAplicaCmnd:=False;
+          if TabCmnd[xcmnd].SwNuevo then begin
+            if (StFlu>0) and (TipoClb<>'2') then
+              rsp:='Comandos Flu en proceso'
+            else begin
+              StFlu:=11;
+              SwEspMinimo:=True;
+              for xpos:=1 to MaxPosCarga do
+                TPosCarga[xPos].StFluPos:=11;
+            end;
+          end
+          else if (not SwEspMinimo) and (((StFlu=0) and (TipoClb<>'2')) or (TipoClb='2')) then begin
+            rsp:='OK';
+            SwAplicaCmnd:=True;
+          end;
         end
 //        // CMND: FLU $     Especial para tipoclb=2
         else if ss='FLU$' then begin
@@ -1984,6 +2009,7 @@ begin
           AgregaLog(ss);
           ss2:=HexSepToStr(ss);
           TransmiteComandoEsp(ss2);
+          SwEspMinimo:=False;
         end
         // ORDENA CARGA DE COMBUSTIBLE
         else if ss='OCC' then begin
@@ -2006,13 +2032,12 @@ begin
                 rsp:='Error en Importe';
               end;
               if rsp='OK' then begin
-                TPosCarga[xpos].tipopago:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,5,' '),0);
                 if rsp='OK' then begin
                   if (TPosCarga[xpos].estatus in [1,5,9]) then begin
                     ss:=ExtraeElemStrSep(TabCmnd[xcmnd].Comando,4,' ');
                     xcomb:=StrToIntDef(ss,0);
                     xp:=PosicionDeCombustible(xpos,xcomb);
-                    TPosCarga[xpos].Esperafinventa:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,6,' '),0);
+                    TPosCarga[xpos].Esperafinventa:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,5,' '),0);
                     // Preset Pesos
                     if TPosCarga[xPos].DigitosGilbarco=6 then begin
                       if ximporte>0 then begin
@@ -2077,13 +2102,12 @@ begin
                 rsp:='Error en Litros';
               end;
               if rsp='OK' then begin
-                TPosCarga[xpos].tipopago:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,5,' '),0);
                 if rsp='OK' then begin
                   if (TPosCarga[xpos].estatus in [1,5,9]) then begin
                     ss:=ExtraeElemStrSep(TabCmnd[xcmnd].Comando,4,' ');
                     xcomb:=StrToIntDef(ss,0);
                     xp:=PosicionDeCombustible(xpos,xcomb);
-                    TPosCarga[xpos].Esperafinventa:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,6,' '),0);
+                    TPosCarga[xpos].Esperafinventa:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,5,' '),0);
                     // Preset Litros
                     if TPosCarga[xPos].DigitosGilbarco=6 then begin
                       if EnviaPresetBomba6(xpos,xp,1,0,xlitros) then begin
@@ -2226,6 +2250,8 @@ begin
       end;
     end;
   except
+    on e:Exception do
+      AgregaLog('Error ProcesaComandos: '+e.Message);
   end;
 end;
 
@@ -2327,7 +2353,10 @@ begin
       else result:=false;
     end;
   except
-    result:=false;
+    on e:exception do begin
+      AgregaLog('Error EnviaPresetFlu: '+e.Message);
+      result:=false;
+    end;
   end;
 end;
 
@@ -2396,21 +2425,27 @@ begin
                             MandaFlujoPos(23,0);
                         end;
                    else begin
+                     AgregaLog('Entro ValFlu - PosFlu:'+IntToStr(PosFlu)+' PosCiclo:'+IntToStr(PosCiclo)+' estatus:'+IntToStr(estatus)+' StFlu:'+IntToStr(StFlu));
                       if (Estatus=1)and(Stflu=1)and(swflu) then begin // Manda Flu
                         if EnviaPresetFlu(PosCiclo,true) then begin
+                          AgregaLog('Envio correcto preset flustd');
                           StFlu:=2;
                           PosFlu:=PosCiclo;
                         end;
                       end;
                       if (Estatus=1)and(Stflu=11)and(swflu) then begin // Manda Flu
                         if EnviaPresetFlu(PosCiclo,false) then begin
+                          AgregaLog('Envio correcto preset flumin');
                           StFlu:=12;
                           PosFlu:=PosCiclo;
                         end;
                       end;
                       if (PosFlu=PosCiclo)and(stflu in[2,12])and(estatus in[2,9]) then begin // detener flu
-                        if DetenerDespacho(PosFlu) then
+                        if DetenerDespacho(PosFlu) then begin
+                          AgregaLog('Se detuvo despacho flu');
                           stflu:=0;
+                          SwEspMinimo:=False;
+                        end;
                       end;
                    end;
                   end;
@@ -2522,42 +2557,6 @@ begin
               ProcesaComandos;
               swflu:=true; // Inicia despues del primer proceso de comandos
             end;
-          7:begin          // CAMBIA PRECIO
-              if not swdeshabil then begin   // no polea los que estan deshabilitados
-                for xp:=1 to NoComb do begin
-                  if Estatus=1 then begin
-                    if TCambioPrecN1[xp] then begin
-                      if TPosCarga[PosCiclo].DigitosGilbarco=6 then begin
-                        AgregaLog('E> Cambia Precio(6): '+inttoclavenum(PosCiclo,2)+' - '+inttoclavenum(xp,2));
-                        if CambiaPrecio6(PosCiclo,xp,1,TNuevoPrec[xp]) then begin
-                          TCambioPrecN1[xp]:=false;
-                        end;
-                      end
-                      else begin
-                        AgregaLog('E> Cambia Precio(8): '+inttoclavenum(PosCiclo,2)+' - '+inttoclavenum(xp,2));
-                        if CambiaPrecio8(PosCiclo,xp,1,TNuevoPrec[xp]) then begin
-                          TCambioPrecN1[xp]:=false;
-                        end;
-                      end;
-                    end
-                    else if TCambioPrecN2[xp] then begin
-                      if TPosCarga[PosCiclo].DigitosGilbarco=6 then begin
-                        AgregaLog('E> Cambia Precio(6): '+inttoclavenum(PosCiclo,2)+' - '+inttoclavenum(xp,2));
-                        if CambiaPrecio6(PosCiclo,xp,1,TNuevoPrec[xp]) then begin
-                          TCambioPrecN2[xp]:=false;
-                        end;
-                      end
-                      else begin
-                        AgregaLog('E> Cambia Precio(8): '+inttoclavenum(PosCiclo,2)+' - '+inttoclavenum(xp,2));
-                        if CambiaPrecio8(PosCiclo,xp,1,TNuevoPrec[xp]) then begin
-                          TCambioPrecN2[xp]:=false;
-                        end;
-                      end;
-                    end;
-                  end;
-                end;
-              end;
-            end;
         end;
       finally
         swespera:=false;
@@ -2592,7 +2591,7 @@ L01:
           NumPaso:=6;
 
         //
-        if NumPaso>=8 then begin
+        if NumPaso>=7 then begin
           AvanzaPosCiclo;
           NumPaso:=1;
           if SwNivelPrecio then
@@ -2830,14 +2829,14 @@ function TSQLGReader.FluMin: string;
 begin
   if Licencia3Ok then begin
     try
-      Result:='True|'+IntToStr(EjecutaComando('FLUMIN'));
+      Result:='True|'+IntToStr(EjecutaComando('FLUMIN'))+'|';
     except
       on e:Exception do
-        Result:='False|Error FLUMIN: '+e.Message;
+        Result:='False|Error FLUMIN: '+e.Message+'|';
     end;
   end
   else
-    Result:='False|Licencia CVL7 invalida';
+    Result:='False|Licencia CVL7 invalida|';
 end;
 
 end.
