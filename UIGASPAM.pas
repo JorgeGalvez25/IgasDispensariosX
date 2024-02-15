@@ -57,6 +57,7 @@ type
     ValorPam3,
     ValorPamf,    
     VersionPam1000,SetUpPAM1000:string;
+    ValidaMang:Boolean;
     ConfAdic:String;
     TAdic31   :array[1..32] of real;
     TAdic32   :array[1..32] of real;
@@ -143,6 +144,7 @@ type
        estatus  :integer;
        descestat:string[20];
        importe,
+       importeant,
        volumen,
        precio   :real;
        //Isla,
@@ -187,6 +189,7 @@ type
        CmndOcc:string[25];
        CombActual:Integer;
        MangActual:Integer;
+       MangAnterior:Integer;
        FluAct:Boolean;
        FluStd:Boolean;
        FluMin:Boolean;
@@ -750,7 +753,6 @@ var lin,ss,rsp,ss2,
     xcomb,xp,xc,xfolio:integer;
     xgrade:char;
     precioComb,
-    importeant,
     ximporte:real;
     xvol,ximp:real;
     swerr,SwAplicaMapa,swAllTotals,SwFlu:boolean;
@@ -1098,6 +1100,7 @@ begin
                  CombActual:=0;
                  PosActual:=0;
                  MangActual:=0;
+                 MangAnterior:=0;
                  if not swAvanzoVenta then
                    swAvanzoVenta:=importe>0;
                end
@@ -1129,8 +1132,6 @@ begin
                      simp:=copy(lin,14,8);
                      spre:=copy(lin,22,5);
 
-                     xcomb:=CombustibleEnPosicion(xpos,PosActual);
-                     MangActual:=MangueraEnPosicion(xpos,PosActual);
                      if digiPrec=1 then
                        precio:=StrToFloat(spre)/100
                      else if digiPrec=2 then
@@ -1149,19 +1150,42 @@ begin
                      if (2*importe<volumen*precio) then
                        importe:=importe*10;
 
-                     if not swAvanzoVenta then begin
+                     if ValidaMang then begin
+                       if (MangAnterior>0) and (MangAnterior=MangueraEnPosicion(xpos,PosActual)) then begin
+                         MangActual:=MangueraEnPosicion(xpos,PosActual);
+                         xcomb:=CombustibleEnPosicion(xpos,PosActual);
+                         CombActual:=CombustibleEnPosicion(xpos,PosActual);
+                       end
+                       else begin
+                         MangAnterior:=MangueraEnPosicion(xpos,PosActual);
+                         importe:=0;
+                         precio:=0;
+                         volumen:=0;
+                       end;
+                     end
+                     else begin
+                       MangActual:=MangueraEnPosicion(xpos,PosActual);
+                       xcomb:=CombustibleEnPosicion(xpos,PosActual);
+                       CombActual:=CombustibleEnPosicion(xpos,PosActual);
+                     end;
+
+                     if (not swAvanzoVenta) and (SwCargando) then begin
                        swAvanzoVenta:=(importe<>importeant) and (SwCargando) and (importe>0) and ((importeant>0) or (importe-importeant<IfThen(xcomb=3,80,40)));
                        AgregaLog(ifthen(swAvanzoVenta,'swAvanzoVenta','NOT')+' Estatus='+IntToStr(Estatus)+' ImporteAnt: '+FloatToStr(importeant)+' Importe: '+FloatToStr(importe));
                      end;
 
-                     if (swAvanzoVenta) and (Estatus in [1,3,5,9]) and (SwCargando) then begin// EOT
+                     if estatus<>2 then
                        SwCargando:=false;
+
+                     if (swAvanzoVenta) and (Estatus in [1,3,5,9]) and (MangActual>0) then begin// EOT
                        swAvanzoVenta:=False;
                        swdesp:=true;
                        SwPidiendoTotales:=True;
                        SwTotales[PosActual]:=True;
                      end;
-                     CombActual:=CombustibleEnPosicion(xpos,PosActual);
+
+                     importeant:=importe;
+
                      if LigaCombs<>'' then begin
                        if ExtraeElemStrSep(LigaCombs,1,':')=IntToStr(CombActual) then
                          CombActual:=StrToInt(ExtraeElemStrSep(LigaCombs,2,':'));
@@ -2616,6 +2640,8 @@ end;
 function TSQLPReader.GuardarLog:string;
 begin
   try
+    AgregaLog('Fecha compilaci�n: 14/02/2024');
+    AgregaLogPetRes('Fecha compilaci�n: 14/02/2024');
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes;
     Result:='True|'+rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt|';
@@ -2816,6 +2842,7 @@ begin
     digiImp:=2;
     VersionPam1000:='3';
     PosTarjeta2:=0;
+    ValidaMang:=False;
     for i:=1 to NoElemStrEnter(variables) do begin
       variable:=ExtraeElemStrEnter(variables,i);
       if UpperCase(ExtraeElemStrSep(variable,1,'='))='DECIMALESLITROS' then
@@ -2829,7 +2856,9 @@ begin
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='VERSIONPAM1000' then
         VersionPam1000:=ExtraeElemStrSep(variable,2,'=')
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='POSTARJETA2' then
-        PosTarjeta2:=StrToInt(ExtraeElemStrSep(variable,2,'='));
+        PosTarjeta2:=StrToInt(ExtraeElemStrSep(variable,2,'='))
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='VALIDARMANGUERA' then
+        ValidaMang:=Trim(UpperCase(ExtraeElemStrSep(variable,2,'=')))='SI';
     end;
 
     productos := js.Field['Products'];
