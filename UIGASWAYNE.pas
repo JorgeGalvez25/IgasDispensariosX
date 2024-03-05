@@ -1794,20 +1794,22 @@ begin
                      volumen:=xvolumen;
                      precio:=xprecio;
                    end;
-                   importeant:=importe;
 
-                   if not swAvanzoVenta then begin
+                   if (not swAvanzoVenta) and (SwCargando) then begin
                      swAvanzoVenta:=(importe<>importeant) and (SwCargando) and (importe>0) and ((importeant>0) or (importe-importeant<IfThen(xcomb=3,80,40)));
                      AgregaLog(ifthen(swAvanzoVenta,'swAvanzoVenta','NOT')+' Estatus='+IntToStr(Estatus)+' ImporteAnt: '+FloatToStr(importeant)+' Importe: '+FloatToStr(importe));
                    end;
 
-                   if (swAvanzoVenta) and (Estatus in [1,3,5,9]) and (SwCargando) then begin// EOT
+                   if estatus<>2 then
                      SwCargando:=false;
+
+                   if (swAvanzoVenta) and (Estatus in [1,3,5,9]) then begin// EOT
                      swAvanzoVenta:=False;
                      swdesp:=true;
                      SwPidiendoTotales:=True;
                      SwCargaTotales[PosDispActual]:=True;
                    end;
+                   
                    if (TPosCarga[xpos].finventa=0) then begin
                      if (Estatus=3) then begin // FIN DE CARGA
 //                       ComandoConsola('R'+inttoclavenum(xpos,2)+'0');
@@ -1820,6 +1822,7 @@ begin
                        end;
                      end;
                    end;
+                   importeant:=importe;
                    CombActual:=CombustibleEnPosicion(xpos,PosDispActual);
                    MangActual:=MangueraEnPosicion(xpos,PosDispActual);
                  end;
