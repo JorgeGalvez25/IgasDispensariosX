@@ -67,6 +67,7 @@ type
     FolioCmnd   :integer;
     horaLog:TDateTime;
     minutosLog:Integer;
+    version:String;
     function GetServiceController: TServiceController; override;
     procedure AgregaLog(lin:string);
     procedure AgregaLogPetRes(lin: string);
@@ -141,7 +142,7 @@ type
        TAjuPos   :array[1..MCxP] of integer;
        TAdic     :array[1..MCxP] of real;
        TCmndZ    :array[1..MCxP] of string[14];
-       SwDesp,SwA,SwPrec   :boolean;
+       SwDesp,SwPrec   :boolean;
        SwAdic       :boolean;
        HoraFinv,
        Hora         :TDateTime;
@@ -630,7 +631,7 @@ end;
 
 function TSQLBReader.AgregaPosCarga(posiciones: TlkJSONbase): string;
 var
-  i,j,k,xpos,xcomb:integer;
+  i,ii,j,jj,k,xpos,xcomb:integer;
   existe:boolean;
   mangueras:TlkJSONbase;
   posCanales:String;
@@ -682,7 +683,6 @@ begin
         MaxPosCarga:=xpos;
       with TPosCarga[xpos] do begin
         SwDesp:=false;
-        SwA:=false;
         SwPrec:=false;
         existe:=false;
         ModoOpera:='Prepago';
@@ -704,8 +704,22 @@ begin
               TMang[NoComb]:=mangueras.Child[j].Field['HoseId'].Value;
               TPos[NoComb]:=mangueras.Child[j].Field['HoseId'].Value;
             end;
+
+            ii:=TPos[NoComb];
+            case ii of
+              1:TAjuPos[ii]:=10;
+              2:TAjuPos[ii]:=13;
+            else
+              TAjuPos[ii]:=12;
+            end;
+            if nocomb=3 then begin
+              for jj:=1 to 4 do
+                TAjuPos[jj]:=9+jj;
+            end;
+
             posCanales:=ExtraeElemStrSep(Canales,xpos,';');
-            TAjuPos[TPos[NoComb]]:=StrToIntDef(ExtraeElemStrSep(posCanales,IfThen(TPos[NoComb]=4,3,TPos[NoComb]),','),0);
+            if posCanales<>'' then
+              TAjuPos[TPos[NoComb]]:=StrToIntDef(ExtraeElemStrSep(posCanales,IfThen(TPos[NoComb]=4,3,TPos[NoComb]),','),0);
           end;
         end;
       end;
@@ -864,10 +878,6 @@ begin
              PosActual:=StrToIntDef(sslin[xpos*2-1],0);
              if PosActual=0 then
                PosActual:=1;
-             if estatusant<>estatus then begin
-               //SwPreset:=false;
-               SwA:=true; //CAMBIO
-             end;
              estatusant:=estatus;
              estatus:=StrToIntDef(sslin[xpos*2],0);
              if (estatus=0)and(stcero<=3) then begin
@@ -1069,7 +1079,7 @@ begin
       repeat
         Inc(PosicionActual);
         with TPosCarga[PosicionActual] do if NoComb>0 then begin
-          if (estatus<>estatusant)or(estatus>=5)or(SwA)or(swinicio2)or(swcargando) then begin
+          if (estatus<>estatusant)or(estatus>=5)or(swinicio2)or(swcargando) then begin
             if Bennett8Digitos<>'Si' then
               ComandoConsolaBuff('A'+IntToClaveNum(PosicionActual,2),false)
             else
@@ -1807,6 +1817,7 @@ end;
 function TSQLBReader.GuardarLog:string;
 begin
   try
+    AgregaLog('Version: '+version);
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes;
     GuardaLogComandos;
@@ -1820,6 +1831,7 @@ end;
 function TSQLBReader.GuardarLogPetRes:string;
 begin
   try
+    AgregaLogPetRes('Version: '+version);
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     Result:='True|';
   except

@@ -15,30 +15,51 @@ uses
   UIGASHONGYANG in 'UIGASHONGYANG.pas' {ogcvdispensarios_hongyang: TService},
   ULIBLICENCIAS in 'ULIBLICENCIAS.pas',
   UIGASGILBARCO in 'UIGASGILBARCO.pas' {SQLGReader: TService},
-  UIGASKIROS in 'UIGASKIROS.pas' {ogcvdispensarios_kiros: TService};
+  UIGASKAIROS in 'UIGASKAIROS.pas' {SQLKReader: TService},
+  UIGASTEAM in 'UIGASTEAM.pas' {SQLTReader: TService};
 
 {$R *.RES}
 var
   config:TIniFile;
   marca:Integer;
+  version:String;
 begin
   Application.Initialize;
 
+  version:='17cec27d7ad6eaa00123b2191b823eb73d644d16';
   config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
   marca:=StrToInt(config.ReadString('CONF','Marca','0'));
   case marca of
     1:
-      Application.CreateForm(TSQLWReader, SQLWReader);
+      begin
+        Application.CreateForm(TSQLWReader, SQLWReader);
+        SQLWReader.version:=version;
+      end;
     2:
-      Application.CreateForm(TSQLBReader, SQLBReader);
+      begin
+        Application.CreateForm(TSQLBReader, SQLBReader);
+        SQLBReader.version:=version;
+      end;
+    3:
+      begin
+        Application.CreateForm(TSQLTReader, SQLTReader);
+        SQLTReader.version:=version;
+      end;        
     4:
-      Application.CreateForm(TSQLPReader, SQLPReader);
-    5:
-      Application.CreateForm(Togcvdispensarios_hongyang, ogcvdispensarios_hongyang);
+      begin
+        Application.CreateForm(TSQLPReader, SQLPReader);
+        SQLPReader.version:=version;
+      end;
     6:
-      Application.CreateForm(TSQLGReader, SQLGReader);
+      begin
+        Application.CreateForm(TSQLGReader, SQLGReader);
+        SQLGReader.version:=version;
+      end;
     7:
-      Application.CreateForm(Togcvdispensarios_kiros, ogcvdispensarios_kiros);
+      begin
+        Application.CreateForm(TSQLKReader, SQLKReader);
+        SQLKReader.version:=version;
+      end;
   end;
   Application.Run;
 end.

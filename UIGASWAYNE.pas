@@ -85,6 +85,7 @@ type
     ListaComandos:TStringList;
     horaLog:TDateTime;
     minutosLog:Integer;
+    version:String;
     function GetServiceController: TServiceController; override;
     procedure AgregaLogPetRes(lin: string);
     procedure Responder(socket:TCustomWinSocket;resp:string);
@@ -1390,6 +1391,7 @@ end;
 function TSQLWReader.GuardarLog: string;
 begin
   try
+    AgregaLog('Version: '+version);
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes;
     Result:='True|'+rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt|';
@@ -1402,6 +1404,7 @@ end;
 function TSQLWReader.GuardarLogPetRes: string;
 begin
   try
+    AgregaLogPetRes('Version: '+version);
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     Result:='True|';
   except
@@ -1675,9 +1678,8 @@ begin
                      swcargando:=false;
                      importeant:=0;
                      if estatusant=2 then begin
-                       ss:='E'+IntToClaveNum(xpos,2); // STOP
-                       ComandoConsola(ss);
-                       esperamiliseg(500);
+                       ComandoConsola('E'+IntToClaveNum(xpos,2));// STOP
+                       esperamiliseg(150);
                      end;
                      if (SwAdic>0) and (ContAdic=3) and (SecondsBetween(segAdic,now)>1) then begin
                        segAdic:=Now;
@@ -1725,11 +1727,9 @@ begin
                  RefrescaEnllavados:=false;
                  SwReinicio:=true;  // Nuevo
                  if (WayneFusion='No')or(MapeoFusion='Si') then begin
-                   ss:='h'+IntToClaveNum(xpos,2)+'00';
-                   ComandoConsola(ss);
+                   ComandoConsola('h'+IntToClaveNum(xpos,2)+'00');
                    esperamiliseg(200);
-                   ss:='k'+IntToClaveNum(xpos,2)+'00';
-                   ComandoConsola(ss);
+                   ComandoConsola('k'+IntToClaveNum(xpos,2)+'00');
                    esperamiliseg(200);
                    MapeaPosicion(xpos);
                    esperamiliseg(200);

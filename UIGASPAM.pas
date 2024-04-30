@@ -83,6 +83,7 @@ type
     ListaComandos:TStringList;
     horaLog:TDateTime;
     minutosLog:Integer;
+    version:String;
     function GetServiceController: TServiceController; override;
     procedure AgregaLog(lin:string);
     procedure AgregaLogPetRes(lin: string);
@@ -746,7 +747,7 @@ end;
 procedure TSQLPReader.ProcesaLinea;
 label uno;
 var lin,ss,rsp,ss2,
-    xestado,xmodo,precios:string;
+    xestado,xmodo,precios,xprodauto:string;
     simp,sval,spre:string[20];
     i,xpos,xcmnd,combx,
     XMANG,XCTE,XVEHI,
@@ -1774,23 +1775,35 @@ begin
                 xPosStop2:=PosTarjeta2;
             end;
             if ValorPAM1<>'' then begin
-//              if VersionPam1000='3' then
-//                ss:='@020'+IntToClaveNum(xposstop,2)+'010'+ValorPAM1+'111000'
-//              else
+              xprodauto:='000000';
+              with TPosCarga[xposstop] do begin
+                for xc:=1 to NoComb do if xc in [1..4] then begin
+                  xp:=TPosx[xc];
+                  if xp in [1..6] then
+                    xprodauto[xp]:='1';
+                end;
+              end;
+
+              if VersionPam1000='3' then
+                ss:='@020'+IntToClaveNum(xposstop,2)+'010'+ValorPAM1+xprodauto
+              else
                 ss:='P'+IntToClaveNum(xposstop,2)+'0'+'1'+'000'+ValorPAM1+'0';
               ComandoConsola(ss);
               EsperaMiliseg(500);
-              ss:='E'+IntToClaveNum(xposstop,2);
-              ComandoConsola(ss);
-              EsperaMiliseg(500);
               if PosTarjeta2>0 then begin
+                xprodauto:='000000';
+                with TPosCarga[xPosStop2] do begin
+                  for xc:=1 to NoComb do if xc in [1..4] then begin
+                    xp:=TPosx[xc];
+                    if xp in [1..6] then
+                      xprodauto[xp]:='1';
+                  end;
+                end;
+
                 if VersionPam1000='3' then
-                  ss:='@020'+IntToClaveNum(xPosStop2,2)+'010'+ValorPAM1+'111000'
+                  ss:='@020'+IntToClaveNum(xPosStop2,2)+'010'+ValorPAM1+xprodauto
                 else
                   ss:='P'+IntToClaveNum(xPosStop2,2)+'0'+'1'+'000'+ValorPAM1+'0';
-                ComandoConsola(ss);
-                EsperaMiliseg(500);
-                ss:='E'+IntToClaveNum(xPosStop2,2);
                 ComandoConsola(ss);
                 EsperaMiliseg(500);
               end;
@@ -1805,8 +1818,16 @@ begin
             until (xpos>MaxPosCarga)or((xPosStop2>0));
             if xposstop2>0 then begin
               if ValorPAM2<>'' then begin
+                xprodauto:='000000';
+                with TPosCarga[xposstop] do begin
+                  for xc:=1 to NoComb do if xc in [1..4] then begin
+                    xp:=TPosx[xc];
+                    if xp in [1..6] then
+                      xprodauto[xp]:='1';
+                  end;
+                end;
                 if VersionPam1000='3' then
-                  ss:='@020'+IntToClaveNum(xposstop2,2)+'010'+ValorPAM2+'111000'
+                  ss:='@020'+IntToClaveNum(xposstop2,2)+'010'+ValorPAM2+xprodauto
                 else
                   ss:='P'+IntToClaveNum(xposstop2,2)+'0'+'1'+'000'+ValorPAM2+'0';
                 ComandoConsola(ss);
@@ -1872,23 +1893,35 @@ begin
                 xPosStop2:=PosTarjeta2;
             end;
             if ValorPAM1<>'' then begin
-//              if VersionPam1000='3' then
-//                ss:='@020'+IntToClaveNum(xposstop,2)+'010'+ValorPAM1+'111000'
-//              else
+              xprodauto:='000000';
+              with TPosCarga[xposstop] do begin
+                for xc:=1 to NoComb do if xc in [1..4] then begin
+                  xp:=TPosx[xc];
+                  if xp in [1..6] then
+                    xprodauto[xp]:='1';
+                end;
+              end;
+
+              if VersionPam1000='3' then
+                ss:='@020'+IntToClaveNum(xposstop,2)+'010'+ValorPAM1+xprodauto
+              else
                 ss:='P'+IntToClaveNum(xposstop,2)+'0'+'1'+'000'+ValorPAM1+'0';
               ComandoConsola(ss);
               EsperaMiliseg(500);
-              ss:='E'+IntToClaveNum(xPosStop,2);
-              ComandoConsola(ss);
-              EsperaMiliseg(500);
               if PosTarjeta2>0 then begin
+                xprodauto:='000000';
+                with TPosCarga[xPosStop2] do begin
+                  for xc:=1 to NoComb do if xc in [1..4] then begin
+                    xp:=TPosx[xc];
+                    if xp in [1..6] then
+                      xprodauto[xp]:='1';
+                  end;
+                end;
+
                 if VersionPam1000='3' then
-//                  ss:='@020'+IntToClaveNum(xPosStop2,2)+'010'+ValorPAM1+'111000'
-//                else
+                  ss:='@020'+IntToClaveNum(xPosStop2,2)+'010'+ValorPAM1+xprodauto
+                else
                   ss:='P'+IntToClaveNum(xPosStop2,2)+'0'+'1'+'000'+ValorPAM1+'0';
-                ComandoConsola(ss);
-                EsperaMiliseg(500);
-                ss:='E'+IntToClaveNum(xPosStop2,2);
                 ComandoConsola(ss);
                 EsperaMiliseg(500);
               end;
@@ -2640,8 +2673,7 @@ end;
 function TSQLPReader.GuardarLog:string;
 begin
   try
-    AgregaLog('Fecha compilaci�n: 14/02/2024');
-    AgregaLogPetRes('Fecha compilaci�n: 14/02/2024');
+    AgregaLog('Version: '+version);
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes;
     Result:='True|'+rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt|';
@@ -2654,6 +2686,7 @@ end;
 function TSQLPReader.GuardarLogPetRes:string;
 begin
   try
+    AgregaLogPetRes('Version: '+version);
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     Result:='True|';
   except
