@@ -1,10 +1,10 @@
-object ogcvdispensarios_kiros: Togcvdispensarios_kiros
+object SQLKReader: TSQLKReader
   OldCreateOrder = False
-  DisplayName = 'ogcvdispensarios_kiros'
+  DisplayName = 'SQL Server VSS Reader'
   OnExecute = ServiceExecute
   Left = 441
   Top = 302
-  Height = 165
+  Height = 164
   Width = 224
   object ServerSocket1: TServerSocket
     Active = False
@@ -13,6 +13,13 @@ object ogcvdispensarios_kiros: Togcvdispensarios_kiros
     OnClientRead = ServerSocket1ClientRead
     Left = 24
     Top = 22
+  end
+  object Timer1: TTimer
+    Enabled = False
+    Interval = 280
+    OnTimer = Timer1Timer
+    Left = 144
+    Top = 20
   end
   object pSerial: TApdComPort
     ComNumber = 1
@@ -23,13 +30,8 @@ object ogcvdispensarios_kiros: Togcvdispensarios_kiros
     TraceName = 'APRO.TRC'
     TraceAllHex = True
     LogName = 'APRO.LOG'
+    OnTriggerAvail = pSerialTriggerAvail
     Left = 81
-    Top = 47
-  end
-  object Timer1: TTimer
-    Enabled = False
-    Interval = 280
-    Left = 144
-    Top = 20
+    Top = 64
   end
 end
