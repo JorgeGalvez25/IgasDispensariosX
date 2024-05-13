@@ -45,6 +45,7 @@ type
     BennettProtec:string;
     Canales,ConfAdic:String;
     CantProtec:Integer;
+    MapCombs:string;
     swflujostd,swflumin:Boolean;
     TAdic31   :array[1..32] of real;
     TAdic32   :array[1..32] of real;
@@ -136,6 +137,7 @@ type
        estatusant:integer;
        NoComb   :integer; // Cuantos combustibles hay en la posicion
        TComb    :array[1..MCxP] of integer; // Claves de los combustibles
+       TCombx   :array[1..MCxP] of integer;
        TPos     :array[1..MCxP] of integer;
        TotalLitros  :array[1..MCxP] of real;
        TMang    :array[1..MCxP] of integer;
@@ -263,6 +265,7 @@ begin
     ServerSocket1.Port:=config.ReadInteger('CONF','Puerto',8585);
     licencia:=config.ReadString('CONF','Licencia','');
     minutosLog:=StrToInt(config.ReadString('CONF','MinutosLog','0'));
+    MapCombs:=config.ReadString('CONF','MapeoCombustibles','');
     ContadorAlarma:=0;
     ListaCmnd:=TStringList.Create;
     SwEsperaRsp:=false;
@@ -281,7 +284,7 @@ begin
     CantProtec:=NoElemStrSep(BennettProtec,';');
     if CantProtec>10 then
       CantProtec:=10;
-    for i:=1 to CantProtec do
+    if CantProtec>0 then for i:=1 to CantProtec do
       TabProtec[i]:=strtointdef(ExtraeElemStrSep(BennettProtec,i,';'),0);
 
     //LicenciaAdic
@@ -317,7 +320,7 @@ begin
     while not Terminated do
       ServiceThread.ProcessRequests(True);
     ServerSocket1.Active := False;
-//    CoUninitialize;
+    CoUninitialize;
   except
     on e:exception do begin
       ListaLog.Add('Error al iniciar servicio: '+e.Message);
@@ -689,13 +692,18 @@ begin
 
         mangueras:=posiciones.Child[i].Field['Hoses'];
         for j:=0 to mangueras.Count-1 do begin
-          xcomb:=mangueras.Child[j].Field['ProductId'].Value;
-          for k:=1 to NoComb do                
-            if TComb[k]=xcomb then
+          if MapCombs<>'' then
+            xcomb:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(MapCombs,xpos,';'),mangueras.Child[j].Field['HoseId'].Value,','))
+          else
+            xcomb:=mangueras.Child[j].Field['ProductId'].Value;
+
+          for k:=1 to NoComb do
+            if TCombx[k]=xcomb then
               existe:=true;
           if not existe then begin
             inc(NoComb);
-            TComb[NoComb]:=xcomb;
+            TComb[NoComb]:=mangueras.Child[j].Field['ProductId'].Value;;
+            TCombx[NoComb]:=xcomb;
             if mangueras.Child[j].Field['HoseId'].Value=3 then begin
               TMang[NoComb]:=4;
               TPos[NoComb]:=4;
