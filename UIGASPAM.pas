@@ -58,6 +58,7 @@ type
     ValorPamf,    
     VersionPam1000,SetUpPAM1000:string;
     ValidaMang:Boolean;
+    AjustePAM:Boolean;
     ConfAdic:String;
     TAdic31   :array[1..32] of real;
     TAdic32   :array[1..32] of real;
@@ -1150,6 +1151,12 @@ begin
                        importe:=importe/10;
                      if (2*importe<volumen*precio) then
                        importe:=importe*10;
+
+                     if AjustePAM then begin
+                       ximporte:=AjustaFloat(volumen*precio,2);
+                       if abs(importe-ximporte)>=0.015 then
+                         importe:=ximporte;
+                     end;
 
                      if ValidaMang then begin
                        if (MangAnterior>0) and (MangAnterior=MangueraEnPosicion(xpos,PosActual)) then begin
@@ -2876,6 +2883,7 @@ begin
     VersionPam1000:='3';
     PosTarjeta2:=0;
     ValidaMang:=False;
+    AjustePAM:=False;
     for i:=1 to NoElemStrEnter(variables) do begin
       variable:=ExtraeElemStrEnter(variables,i);
       if UpperCase(ExtraeElemStrSep(variable,1,'='))='DECIMALESLITROS' then
@@ -2891,7 +2899,9 @@ begin
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='POSTARJETA2' then
         PosTarjeta2:=StrToInt(ExtraeElemStrSep(variable,2,'='))
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='VALIDARMANGUERA' then
-        ValidaMang:=Trim(UpperCase(ExtraeElemStrSep(variable,2,'=')))='SI';
+        ValidaMang:=Trim(UpperCase(ExtraeElemStrSep(variable,2,'=')))='SI'
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='AJUSTEPAM' then
+        AjustePAM:=Trim(UpperCase(ExtraeElemStrSep(variable,2,'=')))='SI';
     end;
 
     productos := js.Field['Products'];
@@ -2902,7 +2912,7 @@ begin
         Result:='False|El precio '+IntToStr(productID)+' es incorrecto|';
         Exit;
       end;
-      LPrecios[productID]:=productos.Child[i].Field['Price'].Value;    
+      LPrecios[productID]:=productos.Child[i].Field['Price'].Value;
     end;
 
     PreciosInicio:=False;
