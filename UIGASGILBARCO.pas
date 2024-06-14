@@ -1319,10 +1319,11 @@ begin
         pSerial.FlushInBuffer;
         pSerial.FlushOutBuffer;
         AgregaLog('E '+chComando+' - '+IntToHex(iComando,1)+'.'+IntToStr(xNPos));
+        newtimer(etTimeOut,MSecs2Ticks(GtwTimeout));
         pSerial.PutChar(chComando);
         repeat
            pSerial.ProcessCommunications;
-        until ( pSerial.OutBuffUsed=0 );
+        until ( ( pSerial.OutBuffUsed=0 ) or ( timerexpired(etTimeOut) ) );
         if ( not bOk ) then begin
           if sw2 then
             newtimer(etTimeOut,MSecs2Ticks(GtwTimeout))
@@ -1384,18 +1385,20 @@ begin
             pSerial.FlushOutBuffer;
             AgregaLog('sDataBlock: '+sDataBlock);
             for i:= 1 to length ( sDataBlock ) do begin
+               newtimer(etTimeOut,MSecs2Ticks(GtwTimeout));
                pSerial.PutChar(sDataBlock[i]);
                repeat
                   pSerial.ProcessCommunications;
-               until ( pSerial.OutBuffUsed=0 );
+               until (( pSerial.OutBuffUsed=0 ) or ( timerexpired(etTimeOut)));
             end;
             sleep(GtwTiempoCmnd);
             chComando:= char($00 + xNPos);
             AgregaLog('E '+chComando+' - '+IntToHex($00,1)+'.'+IntToStr(xNPos));
+            newtimer(etTimeOut,MSecs2Ticks(GtwTimeout));
             pSerial.PutChar(chComando);
             repeat
                pSerial.ProcessCommunications;
-            until ( pSerial.OutBuffUsed=0 );
+            until (( pSerial.OutBuffUsed=0 ) or ( timerexpired(etTimeOut)));
             newtimer(etTimeOut,MSecs2Ticks(GtwTimeout));
             repeat
                Sleep(5);
@@ -1413,6 +1416,9 @@ begin
     except
       on e:Exception do begin
         AgregaLog('Error TransmiteComando: '+e.Message);
+        pSerial.Open:=False;
+        Sleep(200);
+        pSerial.Open:=True;
         raise Exception.Create('Error TransmiteComando');
       end;
     end;
@@ -2441,7 +2447,6 @@ begin
                             MandaFlujoPos(23,0);
                         end;
                    else begin
-                     AgregaLog('Entro ValFlu - PosFlu:'+IntToStr(PosFlu)+' PosCiclo:'+IntToStr(PosCiclo)+' estatus:'+IntToStr(estatus)+' StFlu:'+IntToStr(StFlu));
                       if (Estatus=1)and(Stflu=1)and(swflu) then begin // Manda Flu
                         if EnviaPresetFlu(PosCiclo,true) then begin
                           AgregaLog('Envio correcto preset flustd');
@@ -2723,7 +2728,7 @@ begin
   try
     if Buffer.Count=0 then
       Exit;
-    AgregaLog('Ejecutó buffer');
+    AgregaLog('Ejecutï¿½ buffer');
     objBuffer:=Buffer[0];
     with objBuffer do begin
       AgregaLog('Comando buffer:'+comando);
