@@ -212,8 +212,6 @@ type
 
 var
   SQLGReader: TSQLGReader;
-  key: OleVariant;
-  claveCre, key3DES: string;
   Token: string;
   PreciosInicio: Boolean;
   MaxPosCarga: integer;
@@ -336,23 +334,6 @@ begin
     ListaLogPetRes := TStringList.Create;
     Buffer := TList.Create;
 
-    CoInitialize(nil);
-    Key := CreateOleObject('HaspDelphiAdapter.HaspAdapter');
-    lic := Key.GetKeyData(ExtractFilePath(ParamStr(0)), licencia);
-
-    if UpperCase(ExtraeElemStrSep(lic, 1, '|')) = 'FALSE' then
-    begin
-      ListaLog.Add('Error al validad licencia: ' + Key.StatusMessage);
-      ListaLog.SaveToFile(rutaLog + '\LogDispPetRes' + FiltraStrNum(FechaHoraToStr(Now)) + '.txt');
-      ServiceThread.Terminate;
-      Exit;
-    end
-    else
-    begin
-      claveCre := ExtraeElemStrSep(lic, 2, '|');
-      key3DES := ExtraeElemStrSep(lic, 3, '|');
-    end;
-
     //LicenciaAdic
     razonSocial := config.ReadString('CONF', 'RazonSocial', '');
     licAdic := config.ReadString('CONF', 'LicCVL7', '');
@@ -371,7 +352,6 @@ begin
     while not Terminated do
       ServiceThread.ProcessRequests(True);
     ServerSocket1.Active := False;
-    CoUninitialize;
   except
     on e: exception do
     begin
@@ -571,9 +551,6 @@ begin
   except
     on e: Exception do
     begin
-      if (claveCre <> '') and (key3DES <> '') then
-        AgregaLogPetRes('Error ServerSocket1ClientRead: ' + e.Message + '//Clave CRE: ' + claveCre + '//Terminacion de Key 3DES: ' + copy(key3DES, Length(key3DES) - 3, 4))
-      else
         AgregaLogPetRes('Error ServerSocket1ClientRead: ' + e.Message);
       GuardarLog;
       Responder(Socket, 'DISPENSERS|' + comando + '|False|' + e.Message + '|');
@@ -3074,7 +3051,7 @@ begin
   try
     if Buffer.Count = 0 then
       Exit;
-    AgregaLog('Ejecutó buffer');
+    AgregaLog('Ejecutï¿½ buffer');
     objBuffer := Buffer[0];
     with objBuffer do
     begin
@@ -3145,9 +3122,6 @@ begin
   except
     on e: Exception do
     begin
-      if (claveCre <> '') and (key3DES <> '') then
-        AgregaLogPetRes('Error EjecutaBuffer: ' + e.Message + '//Clave CRE: ' + claveCre + '//Terminacion de Key 3DES: ' + copy(key3DES, Length(key3DES) - 3, 4))
-      else
         AgregaLogPetRes('Error EjecutaBuffer: ' + e.Message);
       GuardarLogPetRes;
       Responder(objBuffer.Socket, 'DISPENSERS|' + objBuffer.comando + '|False|' + e.Message + '|');
