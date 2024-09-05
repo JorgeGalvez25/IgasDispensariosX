@@ -1,4 +1,4 @@
-object ogcvdispensarios_hongyang: Togcvdispensarios_hongyang
+object SQLHReader: TSQLHReader
   OldCreateOrder = False
   DisplayName = 'OpenGas Dispensarios'
   OnExecute = ServiceExecute
@@ -25,7 +25,7 @@ object ogcvdispensarios_hongyang: Togcvdispensarios_hongyang
     Enabled = False
     Interval = 40
     OnTimer = Timer1Timer
-    Left = 47
+    Left = 48
     Top = 96
   end
 end
