@@ -36,6 +36,7 @@ type
     PosicionActual:integer;
     SoportaSeleccionProducto,
     Bennett8Digitos:string;
+    BennetReintentosPreset:Integer;
     UltimoStatus:string;
     SnPosCarga:integer;
     SnImporte,SnLitros:real;
@@ -1220,7 +1221,7 @@ begin
                 TPosCarga[SnPosCarga].SwCmndB:=false;
                 TPosCarga[SnPosCarga].swflujovehiculo:=false;
                 if TPosCarga[SnPosCarga].ContOCC=0 then
-                  TPosCarga[SnPosCarga].ContOCC:=5
+                  TPosCarga[SnPosCarga].ContOCC:=BennetReintentosPreset
                 else begin
                   dec(TPosCarga[SnPosCarga].ContOCC);
                   esperamiliseg(500);
@@ -1319,7 +1320,7 @@ begin
                   TPosCarga[SnPosCarga].SwCmndB:=false;
                   TPosCarga[SnPosCarga].swflujovehiculo:=false;
                   if TPosCarga[SnPosCarga].ContOCC=0 then
-                    TPosCarga[SnPosCarga].ContOCC:=5
+                    TPosCarga[SnPosCarga].ContOCC:=BennetReintentosPreset
                   else begin
                     dec(TPosCarga[SnPosCarga].ContOCC);
                     esperamiliseg(500);
@@ -2232,12 +2233,15 @@ begin
 
     SoportaSeleccionProducto:='No';
     Bennett8Digitos:='No';
+    BennetReintentosPreset:=5;
     for i:=1 to NoElemStrEnter(variables) do begin
       variable:=ExtraeElemStrEnter(variables,i);
       if UpperCase(ExtraeElemStrSep(variable,1,'='))='SOPORTASELECCIONPRODUCTO' then
         SoportaSeleccionProducto:=ExtraeElemStrSep(variable,2,'=')
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='BENNETT8DIGITOS' then
-        Bennett8Digitos:=ExtraeElemStrSep(variable,2,'=');
+        Bennett8Digitos:=ExtraeElemStrSep(variable,2,'=')
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='BENNETREINTENTOSPRESET' then
+        BennetReintentosPreset:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),5);
     end;
 
     consolas := js.Field['Consoles'];
