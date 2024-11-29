@@ -36,6 +36,7 @@ type
     Transmitiendo: Boolean;
     HoraEspera: TDateTime;
     Buffer: TList;
+    CmndNuevo     :Boolean;
     function TransmiteComando(iComando, xNPos: integer; sDataBlock: string): boolean;
     procedure TransmiteComandoEsp(sDataBlock: string);
     function DataControlWordValue(chDataControlWord: char; iLongitud: integer): longint;
@@ -148,7 +149,7 @@ type
     SwDesHabil: boolean;
     DigitosGilbarco, DivImporte, DivLitros, estatus, estatusant: integer;
     importe, volumen, precio: real;
-    Isla, PosActual: integer; // Posicion del combustible en proceso: 1..NoComb
+    Isla, PosActual, xCiclo: integer; // Posicion del combustible en proceso: 1..NoComb
     NoComb: integer; // Cuantos combustibles hay en la posicion
     TComb: array[1..MCxP] of integer; // Claves de los combustibles
     TPosx: array[1..MCxP] of integer;
@@ -175,6 +176,7 @@ type
     HoraOcc: TDateTime;
     CombActual: Integer;
     MangActual: Integer;
+    HoraTotales:TDateTime;
   end;
 
   RegCmnd = record
@@ -222,7 +224,7 @@ var
   Tagx: array[1..3] of integer;
   Swflu       :boolean;
   EstatusAct, EstatusAnt: string;
-  StFlu,PosFlu:integer;
+  StFlu,PosFlu,StCiclo:integer;
   SwEspMinimo:Boolean;
   Licencia3Ok: Boolean;
 
@@ -551,7 +553,7 @@ begin
   except
     on e: Exception do
     begin
-        AgregaLogPetRes('Error ServerSocket1ClientRead: ' + e.Message);
+      AgregaLogPetRes('Error ServerSocket1ClientRead: ' + e.Message);
       GuardarLog;
       Responder(Socket, 'DISPENSERS|' + comando + '|False|' + e.Message + '|');
     end;
@@ -650,6 +652,13 @@ end;
 function TSQLGReader.GuardarLog: string;
 begin
   try
+//    if SecondsBetween(now,horaLog)<10 then begin
+//      Detener;
+//      Terminar;
+//      Shutdown;
+//      Exit;
+//    end;
+    horaLog:=Now;
     AgregaLog('Version: ' + version);
     ListaLog.SaveToFile(rutaLog + '\LogDisp' + FiltraStrNum(FechaHoraToStr(Now)) + '.txt');
     GuardarLogPetRes;
@@ -827,6 +836,7 @@ begin
     SwPasoBien := true;
     PosCiclo := 1;
     swespera := False;
+    StCiclo:=0;
     Timer1.Enabled := True;
 
     if ConfAdic<>'' then
@@ -970,6 +980,7 @@ begin
     SwResp := false;
     Respuesta := '';
     TabCmnd[ind].SwNuevo := true;
+    CmndNuevo:=True;
   end;
   Result := FolioCmnd;
 end;
@@ -1490,6 +1501,7 @@ begin
         pSerial.Open := False;
         Sleep(200);
         pSerial.Open := True;
+        GuardarLog;
         raise Exception.Create('Error TransmiteComando');
       end;
     end;
@@ -1732,26 +1744,33 @@ procedure TSQLGReader.TransmiteComandoEsp(sDataBlock: string);
 var
   i: integer;
 begin
-  sleep(10);
-  pSerial.FlushInBuffer;
-  pSerial.FlushOutBuffer;
-  for i := 1 to length(sDataBlock) do
-  begin
-    pSerial.PutChar(sDataBlock[i]);
+  try
+    sleep(10);
+    pSerial.FlushInBuffer;
+    pSerial.FlushOutBuffer;
+    for i := 1 to length(sDataBlock) do
+    begin
+      pSerial.PutChar(sDataBlock[i]);
+      repeat
+        pSerial.ProcessCommunications;
+      until (pSerial.OutBuffUsed = 0);
+    end;
+    sleep(GtwTiempoCmnd);
+    newtimer(etTimeOut, MSecs2Ticks(GtwTimeout));
     repeat
-      pSerial.ProcessCommunications;
-    until (pSerial.OutBuffUsed = 0);
+      ServiceThread.ProcessRequests(True);
+    until ((bListo) or (timerexpired(etTimeOut)));        // FALLA
+  except
+    on e:Exception do begin
+      AgregaLog('Error TransmiteComandoEsp: '+e.Message);
+      GuardarLog;
+    end;
   end;
-  sleep(GtwTiempoCmnd);
-  newtimer(etTimeOut, MSecs2Ticks(GtwTimeout));
-  repeat
-    ServiceThread.ProcessRequests(True);
-  until ((bListo) or (timerexpired(etTimeOut)));        // FALLA
 end;
 
 function TSQLGReader.AgregaPosCarga(posiciones: TlkJSONbase): string;
 var
-  i, j, k, xisla, xpos, xcomb, xnum: integer;
+  i, j, k, xisla, xpos, xcomb, xnum, xc: integer;
   dataPos: string;
   existe: boolean;
   mangueras: TlkJSONbase;
@@ -1765,9 +1784,14 @@ begin
     end;
 
     MaxPosCarga := 0;
+    xc:=0;
     for i := 1 to 32 do
       with TPosCarga[i] do
       begin
+        xCiclo:=xc;
+        inc(xc);
+        if xc>2 then
+          xc:=0;
         DigitosGilbarco := 6;
         StFluPos:=0;
         for j := 1 to 3 do
@@ -2097,6 +2121,7 @@ var
   precioComb: Double;
 begin
   try
+    CmndNuevo:=False;
     if (minutosLog > 0) and (MinutesBetween(Now, horaLog) >= minutosLog) then
     begin
       horaLog := Now;
@@ -2392,7 +2417,6 @@ begin
         else if (ss = 'TOTAL') then
         begin
           xpos := StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].comando, 2, ' '), 0);
-          ;
           rsp := 'OK';
           with TPosCarga[xpos] do
           begin
@@ -2401,7 +2425,7 @@ begin
               swtotales := True;
               TabCmnd[xcmnd].SwNuevo := false;
             end;
-            if not swtotales then
+            if (not swtotales) or (SecondsBetween(Now,HoraTotales)<=10) then
             begin
               rsp := 'OK' + FormatFloat('0.000', ToTalLitros[1]) + '|' + FormatoMoneda(ToTalLitros[1] * LPrecios[TComb[1]]) + '|' + FormatFloat('0.000', ToTalLitros[2]) + '|' + FormatoMoneda(ToTalLitros[2] * LPrecios[TComb[2]]) + '|' + FormatFloat('0.000', ToTalLitros[3]) + '|' + FormatoMoneda(ToTalLitros[3] * LPrecios[TComb[3]]) + '|';
               SwAplicaCmnd := True;
@@ -2596,6 +2620,9 @@ begin
         AgregaLog('Error Comunicacion Dispensarios');
     end;
 
+    if CmndNuevo then
+      ProcesaComandos;
+
     if (swespera) and ((now - horaespera) > 3 * tmsegundo) then
       swespera := false;
     if not SwEspera then
@@ -2629,13 +2656,15 @@ begin
                     end;
                   end;
                 end;
-              1:
+              1:if (stciclo=xciclo)or(Estatus>1)or(SwPreset) then
                 begin                           // ESTATUS
                   try
                     if not swdeshabil then
                     begin   // no polea los que estan deshabilitados
                       EstatusAnt := Estatus;
                       Estatus := DameEstatus(PosCiclo);    // Aqui bota cuando no hay posicion activa
+                      if estatus>1 then
+                        SwPreset:=False;
                       EstatusDispensarios;
                       ContadorAlarma := 0;
                       if (Estatusant = 0) and (estatus = 1) then
@@ -2688,11 +2717,14 @@ begin
                       end;
                     end;
                   except
-                    DespliegaMemo4('Error Estatus Pos: ' + inttostr(PosCiclo));
-                    AvanzaPosCiclo;
-                    NumPaso := 1;
-                    AgregaLog('NumPaso=1');
-                    exit;
+                    on e:Exception do begin
+                      DespliegaMemo4('Error Estatus Pos: ' + inttostr(PosCiclo));
+                      AvanzaPosCiclo;
+                      NumPaso := 1;
+                      AgregaLog('Error NumPaso=1: '+e.Message);
+                      GuardarLog;
+                      exit;
+                    end;
                   end;
                 end;
               2:
@@ -2749,6 +2781,7 @@ begin
                         end;
                         AgregaLog('R> ' + FormatFloat('###,###,##0.00', TotalLitros[1]) + ' / ' + FormatFloat('###,###,##0.00', TotalLitros[2]) + ' / ' + FormatFloat('###,###,##0.00', TotalLitros[3]));
                         SwTotales := false;
+                        HoraTotales:=Now;
                       end;
                     end
                     else
@@ -2767,6 +2800,7 @@ begin
                         end;
                         AgregaLog('R> ' + FormatFloat('###,###,##0.00', TotalLitros[1]) + ' / ' + FormatFloat('###,###,##0.00', TotalLitros[2]) + ' / ' + FormatFloat('###,###,##0.00', TotalLitros[3]));
                         SwTotales := false;
+                        HoraTotales:=Now;
                       end;
                     end;
                   end;
@@ -2987,7 +3021,7 @@ begin
         xestado := xestado + '7'; // Deshabilitado
       xcomb := CombustibleEnPosicion(xpos, PosActual);
       CombActual := xcomb;
-      MangActual := TMang[NoComb];
+      MangActual := TMang[PosActual];
       ss := inttoclavenum(xpos, 2) + '/' + inttostr(xcomb);
       ss := ss + '/' + FormatFloat('###0.##', volumen);
       ss := ss + '/' + FormatFloat('#0.##', precio);
@@ -3009,11 +3043,22 @@ end;
 
 procedure TSQLGReader.AvanzaPosCiclo;
 begin
-  inc(PosCiclo);
-  if PosCiclo > MaxPosCarga then
-  begin
-    EstatusDispensarios;
-    PosCiclo := 1;
+  try
+    repeat
+      inc(PosCiclo);
+      if PosCiclo>MaxPosCarga then begin
+        EstatusDispensarios;
+        PosCiclo:=1;
+        inc(StCiclo);
+        if StCiclo>2 then
+          StCiclo:=0;
+      end;
+    until (stciclo=TPosCarga[PosCiclo].xCiclo)or(TPosCarga[PosCiclo].Estatus>1);
+  except
+    on e:Exception do begin
+      AgregaLog('Error AvanzaPosCiclo: '+e.Message);
+      GuardarLog;
+    end;
   end;
 end;
 
@@ -3051,7 +3096,7 @@ begin
   try
     if Buffer.Count = 0 then
       Exit;
-    AgregaLog('Ejecutï¿½ buffer');
+    AgregaLog('Ejecutó buffer');
     objBuffer := Buffer[0];
     with objBuffer do
     begin
@@ -3110,9 +3155,9 @@ begin
         RESPCMND_e:
           Responder(Socket, 'DISPENSERS|RESPCMND|' + RespuestaComando(parametro));
         LOG_e:
-          Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOG|' + ObtenerLog(StrToIntDef(parametro, 0))));
+          Socket.SendText('DISPENSERS|LOG|' + ObtenerLog(StrToIntDef(parametro, 0)));
         LOGREQ_e:
-          Socket.SendText(Key.Encrypt(ExtractFilePath(ParamStr(0)), key3DES, 'DISPENSERS|LOGREQ|' + ObtenerLogPetRes(StrToIntDef(parametro, 0))));
+          Socket.SendText('DISPENSERS|LOGREQ|' + ObtenerLogPetRes(StrToIntDef(parametro, 0)));
       else
         Responder(Socket, 'DISPENSERS|' + comando + '|False|Comando desconocido|');
       end;
@@ -3122,7 +3167,7 @@ begin
   except
     on e: Exception do
     begin
-        AgregaLogPetRes('Error EjecutaBuffer: ' + e.Message);
+      AgregaLogPetRes('Error EjecutaBuffer: ' + e.Message);
       GuardarLogPetRes;
       Responder(objBuffer.Socket, 'DISPENSERS|' + objBuffer.comando + '|False|' + e.Message + '|');
     end;
