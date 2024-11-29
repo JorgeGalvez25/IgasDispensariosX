@@ -26,6 +26,7 @@ type
     LineaBuff,
     LineaTimer,
     Linea:string;
+    SwBcc,
     SwEspera,
     swcierrabd,
     FinLinea:boolean;
@@ -175,6 +176,7 @@ type
        MangActual:Integer;
        swflujovehiculo:boolean;
        flujovehiculo  :Real;
+       HoraTotales:TDateTime;
      end;
 
      RegCmnd = record
@@ -194,7 +196,7 @@ const idSTX = #2;
       MaximoDePosiciones = 32;
       NivelPrecioContado='1';
       NivelPrecioCredito='2';
-      MaxEsperaRsp=5;
+      MaxEsperaRsp=3;
 
 type
   TMetodos = (
@@ -658,6 +660,7 @@ begin
       SwPresetHora:=false;
       SwAdic:=false;
       swflujovehiculo:=False;
+      HoraTotales:=0;
     end;
 
     for i:=0 to posiciones.Count-1 do begin
@@ -693,21 +696,23 @@ begin
               TPos[NoComb]:=mangueras.Child[j].Field['HoseId'].Value;
             end;
 
-            ii:=TPos[NoComb];
-            case ii of
-              1:TAjuPos[ii]:=10;
-              2:TAjuPos[ii]:=13;
-            else
-              TAjuPos[ii]:=12;
-            end;
-            if nocomb=3 then begin
-              for jj:=1 to 4 do
-                TAjuPos[jj]:=9+jj;
-            end;
-
             posCanales:=ExtraeElemStrSep(Canales,xpos,';');
             if posCanales<>'' then
-              TAjuPos[TPos[NoComb]]:=StrToIntDef(ExtraeElemStrSep(posCanales,IfThen(TPos[NoComb]=4,3,TPos[NoComb]),','),0);
+              TAjuPos[TPos[NoComb]]:=StrToIntDef(ExtraeElemStrSep(posCanales,IfThen(TPos[NoComb]=4,3,TPos[NoComb]),','),0)
+            else begin
+              ii:=TPos[NoComb];
+              case ii of
+                1:TAjuPos[ii]:=10;
+                2:TAjuPos[ii]:=13;
+              else
+                TAjuPos[ii]:=12;
+              end;
+              if nocomb=3 then begin
+                for jj:=1 to 4 do
+                  TAjuPos[jj]:=9+jj;
+              end;
+            end;
+            posCanales:=ExtraeElemStrSep(Canales,xpos,';');
           end;
         end;
       end;
@@ -727,7 +732,7 @@ procedure TSQLBReader.ComandoConsolaBuff(ss:string;swinicio:boolean);
 begin
   if (ListaCmnd.Count=0)and(not SwEsperaRsp) then
     ComandoConsola(ss)
-  else begin
+  else if not swflumin then begin
     if swinicio then begin
       ListaCmnd.Insert(0,ss);
     end
@@ -787,8 +792,11 @@ begin
       c:=LineaBuff[1];
       delete(LineaBuff,1,1);
       Linea:=Linea+C;
-      if C=idETX then begin
+      if SwBcc then begin
         FinLinea:=true;
+      end;
+      if C=idETX then begin
+        SwBcc:=true;
       end;
       if (C=idACK)or(c=idNAK) then
         FinLinea:=true;
@@ -797,6 +805,7 @@ begin
       LineaTimer:=Linea;
       AgregaLog('R '+LineaTimer);
       Linea:='';
+      SwBcc:=false;
       FinLinea:=false;
       ProcesaLinea;
       LineaTimer:='';
@@ -950,7 +959,7 @@ begin
                    if Estatus<>Estatusant then
                      HoraFinv:=Now;
                    if (Now-HoraFinv)>=(SegundosFinv*tmSegundo) then
-                     ComandoConsola('J'+IntToClaveNum(xpos,2));
+                     ComandoConsolaBuff('J'+IntToClaveNum(xpos,2),False);
                  end;
                8:descestat:='Venta Pendiente';
                9:descestat:='Error';
@@ -1047,6 +1056,7 @@ begin
              for j:=1 to MCxP do
                if TPos[j] in [1..4] then
                  TotalLitros[j]:=TotLts[TPos[j]];
+             HoraTotales:=Now;
            end;
          end;
        end;
@@ -1415,7 +1425,7 @@ begin
               if TPosCarga[xpos].Estatus in [7,8,1] then begin // EOT
                 if (not TPosCarga[xpos].swcargando) then begin
                   ss:='J'+IntToClaveNum(xpos,2); // Fin de Venta
-                  ComandoConsola(ss);
+                  ComandoConsolaBuff(ss,False);
                 end
                 else
                   rsp:='Posicion no esta despachando';
@@ -1458,7 +1468,7 @@ begin
           xpos:=strtointdef(ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,2,' '),0);
           if xpos in [1..MaxPosCarga] then begin
             if (TPosCarga[xpos].estatus in [6]) then begin
-              ComandoConsola('S'+IntToClaveNum(xpos,2));
+              ComandoConsolaBuff('S'+IntToClaveNum(xpos,2),False);
             end;
           end;
         end
@@ -1467,7 +1477,7 @@ begin
           xpos:=SnPosCarga;
           rsp:='OK';
           with TPosCarga[xpos] do begin
-            if TabCmnd[claveCmnd].SwNuevo then begin
+            if (TabCmnd[claveCmnd].SwNuevo) and (SecondsBetween(Now,HoraTotales)>10) then begin
               SwCargaTotales:=True;
               TabCmnd[claveCmnd].SwNuevo:=false;
               ComandoConsolaBuff('N'+IntToClaveNum(xpos,2),false);
@@ -1493,11 +1503,10 @@ begin
                   xp:=TPosCarga[xpos].TPos[xcmb];
                   ss:='Z'+IntToClaveNum(xpos,2);
                   ss:=ss+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4);
-                  if xp=4 then xp:=3;
                   case xp of
-                    1:xadic:=TAdic31[xpos]+TPosCarga[xpos].Tadic[xp];
-                    2:xadic:=TAdic32[xpos]+TPosCarga[xpos].Tadic[xp];
-                    else xadic:=TAdic33[xpos]+TPosCarga[xpos].Tadic[xp];
+                    1:xadic:=TAdic31[xpos]+TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
+                    2:xadic:=TAdic32[xpos]+TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
+                    else xadic:=TAdic33[xpos]+TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
                   end;
                   if xadic>9.5 then
                     xadic:=9.99;
@@ -1521,17 +1530,19 @@ begin
         // CMND: ACTIVA FLUJO MINIMO
         else if ss='FLUMIN' then begin // FLUJO MINIMO
           if (Licencia3Ok) then begin
+            SwAplicaCmnd:=False;
             if not swflumin then begin
-              swflumin:=true;
-              rsp:='OK';
               for xpos:=1 to MaxPosCargaActiva do begin
                 if (xpos<=MaximoDePosiciones) then if TPosCarga[xpos].estatus<>0 then
                   ProcesaFlujo(xpos,false);
               end;
-              GuardarLog;
+              swflumin:=true;
             end
-            else
+            else if (ListaCmnd.Count=0) then begin
               rsp:='OK';
+              SwAplicaCmnd:=True;
+              GuardarLog;
+            end;
           end
           else begin // if licencia2ok
             rsp:='Opcion no Habilitada';
@@ -2468,27 +2479,20 @@ var xp,xcmb:integer;
 begin
   for xcmb:=1 to TPosCarga[xpos].NoComb do begin
     xp:=TPosCarga[xpos].TPos[xcmb];
-    if xp=4 then xp:=3;
     if swarriba then begin  // arriba
       if swflujostd then
         ComandoConsolaBuff(TPosCarga[xpos].TCmndZ[xp],true);
     end
     else begin // abajo
-      xadic:=TPosCarga[xpos].Tadic[xp];
+      xadic:=TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
       if xadic>9.5 then
         xadic:=9.99;
       if xadic>0 then
         sval:='+'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)))
       else
         sval:='-'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)));
-      if xp=3 then xp:=4;
       ss:='Z'+IntToClaveNum(xpos,2)+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4)+sval;
-      ComandoConsola(ss);
-      Sleep(100);
-      if swflumin then begin
-        ComandoConsola(ss);
-        Sleep(100);
-      end;
+      ComandoConsolaBuff(ss,False);
     end;
   end;
 end;

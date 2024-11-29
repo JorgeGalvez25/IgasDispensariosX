@@ -12,7 +12,7 @@ uses
   IdHash in 'IdHash.pas',
   OG_Hasp in 'OG_Hasp.pas',
   UIGASWAYNE in 'UIGASWAYNE.pas' {SQLWReader: TService},
-  UIGASHONGYANG in 'UIGASHONGYANG.pas' {ogcvdispensarios_hongyang: TService},
+  UIGASHONGYANG in 'UIGASHONGYANG.pas' {SQLHReader: TService},
   ULIBLICENCIAS in 'ULIBLICENCIAS.pas',
   UIGASGILBARCO in 'UIGASGILBARCO.pas' {SQLGReader: TService},
   UIGASKAIROS in 'UIGASKAIROS.pas' {SQLKReader: TService},
@@ -20,46 +20,46 @@ uses
 
 {$R *.RES}
 var
-  config:TIniFile;
-  marca:Integer;
-  version:String;
+  config: TIniFile;
+  marca: Integer;
+  version: string;
+
 begin
   Application.Initialize;
 
-  version:='17cec27d7ad6eaa00123b2191b823eb73d644d16';
-  config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
-  marca:=StrToInt(config.ReadString('CONF','Marca','0'));
+  version := '2ad53b46c8346ed3d23c2f3437389e8abc1658ba';
+  config := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
+  marca := StrToInt(config.ReadString('CONF', 'Marca', '0'));
   case marca of
-    1:
-      begin
+    1:begin
         Application.CreateForm(TSQLWReader, SQLWReader);
-        SQLWReader.version:=version;
+        SQLWReader.version := version;
       end;
-    2:
-      begin
+    2:begin
         Application.CreateForm(TSQLBReader, SQLBReader);
-        SQLBReader.version:=version;
+        SQLBReader.version := version;
       end;
-    3:
-      begin
+    3:begin
         Application.CreateForm(TSQLTReader, SQLTReader);
-        SQLTReader.version:=version;
-      end;        
-    4:
-      begin
+        SQLTReader.version := version;
+      end;
+    4:begin
         Application.CreateForm(TSQLPReader, SQLPReader);
-        SQLPReader.version:=version;
+        SQLPReader.version := version;
       end;
-    6:
-      begin
+    5:begin
+        Application.CreateForm(TSQLHReader, SQLHReader);
+        SQLHReader.version := version;
+      end;
+    6:begin
         Application.CreateForm(TSQLGReader, SQLGReader);
-        SQLGReader.version:=version;
+        SQLGReader.version := version;
       end;
-    7:
-      begin
+    7:begin
         Application.CreateForm(TSQLKReader, SQLKReader);
-        SQLKReader.version:=version;
+        SQLKReader.version := version;
       end;
   end;
   Application.Run;
 end.
+
