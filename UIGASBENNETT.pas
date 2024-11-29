@@ -1482,10 +1482,12 @@ begin
           rsp:='OK';
           xpos:=strtointdef(ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,2,' '),0);
           if (xpos<=MaximoDePosiciones) then begin
-            if TPosCarga[xpos].ModoOpera='Normal' then
-              ComandoConsolaBuff('P'+IntToClaveNum(xpos,2)+FiltraStrNum(FormatFloat('0000.00',9999.00)),false)
-            else
-              ComandoConsolaBuff('5'+IntToClaveNum(xpos,2)+FiltraStrNum(FormatFloat('000000.00',999999.00)),false);
+            if TPosCarga[xpos].ModoOpera='Normal' then begin
+              if Bennett8Digitos<>'Si' then
+                ComandoConsolaBuff('P'+IntToClaveNum(xpos,2)+FiltraStrNum(FormatFloat('0000.00',9999.00)),false)
+              else
+                ComandoConsolaBuff('5'+IntToClaveNum(xpos,2)+FiltraStrNum(FormatFloat('000000.00',999999.00)),false);
+            end;
             ComandoConsolaBuff('E'+IntToClaveNum(xpos,2),false);
             if TPosCarga[xpos].estatus=2 then
               TPosCarga[xpos].tipopago:=0;
