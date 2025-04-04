@@ -1504,7 +1504,7 @@ begin
 
                         TPosCarga[SnPosCarga].finventa:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,5,' '),0);
                         if VersionPam1000='3' then
-                          EnviaPreset3(rsp,0)
+                          EnviaPreset3(rsp,xcomb)
                         else
                           EnviaPreset(rsp,xcomb);
                       end
@@ -1827,7 +1827,10 @@ begin
                 ss:='P'+IntToClaveNum(xposstop,2)+'0'+'1'+'000'+ValorPAM1+'0';
               TPosCarga[xposstop].HoraPresetFlu:=Now;
               ComandoConsola(ss);
-              EsperaMiliseg(500);
+              EsperaMiliseg(300);
+              ss:='E'+IntToClaveNum(xposstop,2);
+              ComandoConsola(ss);
+              EsperaMiliseg(200);
               if PosTarjeta2>0 then begin
                 xprodauto:='000000';
                 with TPosCarga[xPosStop2] do begin
@@ -1844,7 +1847,10 @@ begin
                   ss:='P'+IntToClaveNum(xPosStop2,2)+'0'+'1'+'000'+ValorPAM1+'0';
                 TPosCarga[xPosStop2].HoraPresetFlu:=Now;
                 ComandoConsola(ss);
-                EsperaMiliseg(500);
+                EsperaMiliseg(300);
+                ss:='E'+IntToClaveNum(xPosStop2,2);
+                ComandoConsola(ss);
+                EsperaMiliseg(200);
               end;
             end
             else xposstop:=0;
@@ -1871,7 +1877,10 @@ begin
                   ss:='P'+IntToClaveNum(xposstop2,2)+'0'+'1'+'000'+ValorPAM2+'0';
                 TPosCarga[xposstop].HoraPresetFlu:=Now;
                 ComandoConsola(ss);
-                EsperaMiliseg(500);
+                EsperaMiliseg(300);
+                ss:='E'+IntToClaveNum(xposstop2,2);
+                ComandoConsola(ss);
+                EsperaMiliseg(200);
               end
               else xposstop2:=0;
             end;
@@ -1944,7 +1953,10 @@ begin
                 ss:='P'+IntToClaveNum(xposstop,2)+'0'+'1'+'000'+ValorPAM1+'0';
               TPosCarga[xposstop].HoraPresetFlu:=Now;
               ComandoConsola(ss);
-              EsperaMiliseg(500);
+              EsperaMiliseg(300);
+              ss:='E'+IntToClaveNum(xposstop,2);
+              ComandoConsola(ss);
+              EsperaMiliseg(200);
               if PosTarjeta2>0 then begin
                 xprodauto:='000000';
                 with TPosCarga[xPosStop2] do begin
@@ -1961,7 +1973,10 @@ begin
                   ss:='P'+IntToClaveNum(xPosStop2,2)+'0'+'1'+'000'+ValorPAM1+'0';
                 TPosCarga[xPosStop2].HoraPresetFlu:=Now;
                 ComandoConsola(ss);
-                EsperaMiliseg(500);
+                EsperaMiliseg(300);
+                ss:='E'+IntToClaveNum(xPosStop2,2);
+                ComandoConsola(ss);
+                EsperaMiliseg(200);
               end;
             end
             else xposstop:=0;
@@ -1988,7 +2003,7 @@ begin
               end
               else xposstop2:=0;
             end;
-            //PasoPumpStop:=10;
+            GuardarLog;
           end;
         end
         // CMND: ACTIVA FLUJO ESPECIAL GILBARCO
