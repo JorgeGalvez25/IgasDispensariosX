@@ -1425,8 +1425,12 @@ begin
                         ComandoConsolaBuff(ss,false);
                         EsperaMiliSeg(300);
                         TPosCarga[SnPosCarga].SwCmndF:=true;
+                        if Bennett8Digitos<>'Si' then
+                          SnImporte:=9999.99
+                        else
+                          SnImporte:=999999.99;
 
-                        SnImporte:=9999.99; SnLitros:=0;
+                        SnLitros:=0;
                         EnviaPreset(rsp,xcomb);
                       end;
                     end
@@ -2466,10 +2470,12 @@ begin
             mang:=ExtraeElemStrSep(mangueras,j,',');
             if NoElemStrSep(mang,'-')>1 then begin
               Flu[j]:=StrToFloatDef(ExtraeElemStrSep(mang,1,'-'),0);
+              Flu[j]:=IfThen(Flu[j]=9,9.99,Flu[j]);
               Tadic[j]:=StrToFloatDef(ExtraeElemStrSep(mang,2,'-'),0)*-1;
             end
             else begin
               Flu[j]:=StrToFloatDef(ExtraeElemStrSep(mang,1,'+'),0);
+              Flu[j]:=IfThen(Flu[j]=9,9.99,Flu[j]);
               Tadic[j]:=StrToFloatDef(ExtraeElemStrSep(mang,2,'+'),0);
             end;
           end;                                    
