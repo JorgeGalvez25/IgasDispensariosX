@@ -10,6 +10,7 @@ uses
 const
   MCxP = 4;
   ValorX = '9573';
+  ValorXD = '9574';
   ValorOn = '93715';
   ValorOff = '92476';
 
@@ -57,9 +58,10 @@ type
     FolioCmnd: integer;
     ContadorTotPos, ContadorTot: Integer;
     DecimalesGilbarco: Integer;
-    DigGilbarco: Integer;
+    DigGilbarco: string;
     TipoClb: string;
     ConfAdic: string;
+    DieselAdic: Boolean;
 
     GtwDivPresetLts,        // Divisor preset litros           **
     GtwDivPresetPesos,      // Divisor preset pesos            **
@@ -126,6 +128,7 @@ type
     function DameVentaProceso6(xNPos: integer; var rPesos: real): boolean;
     function DameVentaProceso8(xNPos: integer; var rPesos: real): boolean;
     function EnviaPresetBomba6(xNPos, xNMang, xNPrec: integer; rPesos, rLitros: real): boolean;
+    function EnviaPresetBomba6x(xNPos:integer; rPesos: real) : boolean;
     function EnviaPresetBomba8(xNPos, xNMang, xNPrec: integer; rPesos, rLitros: real): boolean;
     function DameEstatus(PosCarga: integer): integer;
     function Autoriza(PosCarga: integer): boolean;
@@ -177,6 +180,7 @@ type
     CombActual: Integer;
     MangActual: Integer;
     HoraTotales:TDateTime;
+    EsDiesel:Boolean;
   end;
 
   RegCmnd = record
@@ -224,14 +228,14 @@ var
   Tagx: array[1..3] of integer;
   Swflu       :boolean;
   EstatusAct, EstatusAnt: string;
-  StFlu,PosFlu,StCiclo:integer;
-  SwEspMinimo:Boolean;
+  StFlu,PosFlu,StCiclo,CombPendiente:integer;
+  SwEspMinimo,SwEspMinimoCerrar:Boolean;
   Licencia3Ok: Boolean;
 
 implementation
 
 uses
-  TypInfo, StrUtils, Variants, DateUtils;
+  TypInfo, StrUtils, Variants, DateUtils, Math;
 
 {$R *.DFM}
 
@@ -325,8 +329,10 @@ begin
     ServerSocket1.Port := config.ReadInteger('CONF', 'Puerto', 1001);
     licencia := config.ReadString('CONF', 'Licencia', '');
     minutosLog := StrToInt(config.ReadString('CONF', 'MinutosLog', '0'));
+    DigGilbarco:=config.ReadString('CONF','DigitosGilbarco','');
     TipoClb := config.ReadString('CONF', 'TipoClb', '1');
     ConfAdic := config.ReadString('CONF', 'ConfAdic', '');
+    DieselAdic := UpperCase(config.ReadString('CONF', 'DieselAdic', ''))='SI';
     ListaCmnd := TStringList.Create;
     ServerSocket1.Active := True;
     detenido := True;
@@ -1502,7 +1508,6 @@ begin
         Sleep(200);
         pSerial.Open := True;
         GuardarLog;
-        raise Exception.Create('Error TransmiteComando');
       end;
     end;
   finally
@@ -1817,7 +1822,7 @@ begin
         end;
         SwDeshabil := false;
         SwTotales := true;
-        SwLeeVenta := true;
+        SwLeeVenta := False;
         SwFinVenta := false;
         SwNivelPrecio := true;
         SwCambiaPrecio := false;
@@ -1843,10 +1848,10 @@ begin
           DivLitros := DecimalesGilbarco;
         end;
 
-        if DigGilbarco = 8 then
-          DigitosGilbarco := 8;
+        DigitosGilbarco:=StrToIntDef(ExtraeElemStrSep(DigGilbarco,xpos,';'),6);
 
-        AgregaLog('DigitosGilbarco=' + IntToStr(DigitosGilbarco));
+        DivImporte:=IfThen(DigitosGilbarco=8,1000,100);
+        DivLitros:=IfThen(DigitosGilbarco=8,1000,100);
 
         mangueras := posiciones.Child[i].Field['Hoses'];
         for j := 0 to mangueras.Count - 1 do
@@ -1861,6 +1866,7 @@ begin
             inc(NoComb);
             TComb[NoComb] := xcomb;
             TMang[NoComb] := mangueras.Child[j].Field['HoseId'].Value;
+            EsDiesel:=(NoComb=1) and (xcomb>1);
             if TMang[NoComb] > 0 then
             begin
               TPosx[NoComb] := TMang[NoComb];
@@ -1998,7 +2004,6 @@ begin
     dispensarios := js.Field['Dispensers'];
 
     DecimalesGilbarco := 2;
-    DigGilbarco := 6;
     GtwDivPresetLts := 100;
     GtwDivPresetPesos := 100;
     GtwDivPrecio := 100;
@@ -2014,8 +2019,6 @@ begin
       variable := ExtraeElemStrEnter(variables, i);
       if UpperCase(ExtraeElemStrSep(variable, 1, '=')) = 'DECIMALESGILBARCO' then
         DecimalesGilbarco := StrToInt(ExtraeElemStrSep(variable, 2, '='))
-      else if UpperCase(ExtraeElemStrSep(variable, 1, '=')) = 'DIGITOSGILBARCO' then
-        DigGilbarco := StrToInt(ExtraeElemStrSep(variable, 2, '='))
       else if UpperCase(ExtraeElemStrSep(variable, 1, '=')) = 'GTWDIVPRESETLTS' then
         GtwDivPresetLts := StrToIntDef(ExtraeElemStrSep(variable, 2, '='), 100)
       else if UpperCase(ExtraeElemStrSep(variable, 1, '=')) = 'GTWDIVPRESETPESOS' then
@@ -2160,8 +2163,12 @@ begin
             if (StFlu>0) and (TipoClb<>'2') then
               rsp:='Comandos Flu en proceso'
             else begin
+              if TipoClb='1' then begin
+                SwAplicaCmnd:=True;
+                SwEspMinimoCerrar:=True;
+                rsp:='OK';
+              end;
               StFlu:=11;
-              SwEspMinimo:=True;
               for xpos:=1 to MaxPosCarga do
                 TPosCarga[xPos].StFluPos:=11;
             end;
@@ -2180,6 +2187,19 @@ begin
           ss2:=HexSepToStr(ss);
           TransmiteComandoEsp(ss2);
           SwEspMinimo:=False;
+        end
+        else if ss='ESTADI' then begin
+          if StFlu=0 then begin
+            rsp:='OK';
+            if SwEspMinimoCerrar then begin
+              GuardarLog;
+              Detener;
+              Terminar;
+              Shutdown;      
+            end;
+          end
+          else
+            rsp:='Comandos en proceso';
         end
         // ORDENA CARGA DE COMBUSTIBLE
         else if ss = 'OCC' then
@@ -2568,24 +2588,12 @@ begin
   result := true;
   try
     if xsube then
-      ximporte := StrToIntDef(Valorx + inttostr(tagx[1]), 0) / 100
+      ximporte := StrToIntDef(IfThen(TPosCarga[xpos].EsDiesel, ValorXD, ValorX) + inttostr(tagx[1]), 0) / 100
     else
-      ximporte := StrToIntDef(Valorx + '0', 0) / 100;
+      ximporte := StrToIntDef(IfThen(TPosCarga[xpos].EsDiesel, ValorXD, ValorX) + '0', 0) / 100;
     AgregaLog('Preset Posicion ' + inttoclavenum(xpos, 2) + ' $' + FormatoMoneda(ximporte));
-    if TPosCarga[xpos].DigitosGilbarco = 6 then
-    begin
-      if EnviaPresetBomba6(xpos, 1, 1, ximporte, 0) then
-      begin
-        if Autoriza(xpos) then
-        begin
-          TPosCarga[xpos].SwPreset := true;
-        end
-        else
-          result := false;
-      end
-      else
-        result := false;
-    end
+    if TPosCarga[xPos].DigitosGilbarco=6 then
+      EnviaPresetBomba6x(xpos,ximporte)
     else
     begin
       if EnviaPresetBomba8(xpos, 1, 1, ximporte, 0) then
@@ -2692,14 +2700,16 @@ begin
                                 MandaFlujoPos(23,0);
                             end;
                        else begin
-                          if (Estatus=1)and(Stflu=1)and(swflu) then begin // Manda Flu
+                          if (Estatus=1)and(Stflu=1)and(swflu) and
+                             ((CombPendiente=0) or ((CombPendiente=3) and (EsDiesel)) or ((CombPendiente=1) and (not EsDiesel))) then begin // Manda Flu
                             if EnviaPresetFlu(PosCiclo,true) then begin
                               AgregaLog('Envio correcto preset flustd');
                               StFlu:=2;
                               PosFlu:=PosCiclo;
                             end;
                           end;
-                          if (Estatus=1)and(Stflu=11)and(swflu) then begin // Manda Flu
+                          if (Estatus=1)and(Stflu=11)and(swflu) and
+                             ((CombPendiente=0) or ((CombPendiente=3) and (EsDiesel)) or ((CombPendiente=1) and (not EsDiesel))) then begin // Manda Flu
                             if EnviaPresetFlu(PosCiclo,false) then begin
                               AgregaLog('Envio correcto preset flumin');
                               StFlu:=12;
@@ -2709,7 +2719,14 @@ begin
                           if (PosFlu=PosCiclo)and(stflu in[2,12])and(estatus in[2,9]) then begin // detener flu
                             if DetenerDespacho(PosFlu) then begin
                               AgregaLog('Se detuvo despacho flu');
-                              stflu:=0;
+                              if (DieselAdic) and (CombPendiente=0) then begin
+                                CombPendiente:=IfThen(EsDiesel,1,3);
+                                StFlu:=IfThen(stflu=2,1,11);
+                              end
+                              else begin
+                                stflu:=0;
+                                CombPendiente:=0;
+                              end;
                               SwEspMinimo:=False;
                             end;
                           end;
@@ -2761,7 +2778,7 @@ begin
                   end;
                 end;
               3:
-                if (swtotales) and (estatus > 0) then
+                if (swtotales) and (estatus = 1) then
                 begin        // LEE TOTALES
                   if not swdeshabil then
                   begin   // no polea los que estan deshabilitados
@@ -3096,7 +3113,7 @@ begin
   try
     if Buffer.Count = 0 then
       Exit;
-    AgregaLog('Ejecutó buffer');
+    AgregaLog('Ejecutï¿½ buffer');
     objBuffer := Buffer[0];
     with objBuffer do
     begin
@@ -3236,6 +3253,16 @@ var xstr : string;
 begin
    xstr:='C6 B4 A9 D5 '+inttohex(xpos+224,2)+' E5 E0 '+inttohex(xvalor+224,2)+' FF FF FF FF';
    EjecutaComando('FLU$ '+xstr);
+end;
+
+function TSQLGReader.EnviaPresetBomba6x(xNPos: integer;
+  rPesos: real): boolean;
+var sAmount, sDataBlock : string;
+begin
+  sAmount:= format('%5.5d',[round(rPesos*GtwDivPresetPesos)]);
+  sDataBlock:= #$FF+#$E5+#$F2+#$F4+#$F8+BcdToStr(sAmount)+ #$FB;
+  sDataBlock:= sDataBlock + LrcCheckChar(sDataBlock) + #$F0;
+  TransmiteComandoEsp(sDataBlock);
 end;
 
 end.
