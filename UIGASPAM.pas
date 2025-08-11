@@ -338,12 +338,15 @@ procedure TSQLPReader.ServerSocket1ClientRead(Sender: TObject;
     metodoEnum:TMetodos;
 begin
   mensaje:=Socket.ReceiveText;
+
+  AgregaLogPetRes('R '+mensaje);
+
   if (Length(mensaje)=1) and (StrToIntDef(mensaje,-99) in [0,1]) then begin
     pSerial.Open:=mensaje='1';
     Socket.SendText('1');
     Exit;
   end;
-  AgregaLogPetRes('R '+mensaje);
+
   if UpperCase(ExtraeElemStrSep(mensaje,1,'|'))='DISPENSERSX' then begin
     try
       if NoElemStrSep(mensaje,'|')>=2 then begin
@@ -822,10 +825,23 @@ begin
                      end;
                      if (estatusant<>estatus) then begin
                        if swflujovehiculo then begin
+                        xprodauto:='000000';
+                         with TPosCarga[xpos] do begin
+                           for xc:=1 to NoComb do if xc in [1..4] then begin
+                             xp:=TPosx[xc];
+                             if xp in [1..6] then
+                               xprodauto[xp]:='1';
+                           end;
+                         end;
                          xp:=txp[xpos];
                          ss2:=inttostr(TAdicf[xpos,xp]);
                          ValorPamF:='80'+inttostr(xpos)+inttostr(xp)+ss2[1];
-                         ss:='P'+IntToClaveNum(xpos,2)+'0'+'1'+'000'+ValorPAMF+'0';
+
+                         if VersionPam1000='3' then
+                           ss:='@020'+IntToClaveNum(xpos,2)+'010'+ValorPAMF+xprodauto
+                         else
+                           ss:='P'+IntToClaveNum(xpos,2)+'01000'+ValorPAMF+'0';
+
                          ComandoConsola(ss);
                          EsperaMiliseg(1000);
 
@@ -986,9 +1002,6 @@ begin
                              SwCerrarMin:=False;
                          if SwCerrarMin then begin
                            GuardarLog;
-                           Detener;
-                           Terminar;
-                           Shutdown;
                          end;
                        end;
                      end;
@@ -1464,7 +1477,7 @@ begin
                     decImporteStr:=ExtraeElemStrSep(SnImporteStr,2,'.');
                     if (Length(decImporteStr)=5) and (FlujoPorVehiculo) then begin
                       TPosCarga[SnPosCarga].swflujovehiculo:=true;
-                      TPosCarga[SnPosCarga].flujovehiculo:=StrToInt(decImporteStr[3]+'.'+copy(decImporteStr,4,2));
+                      TPosCarga[SnPosCarga].flujovehiculo:=StrToInt(decImporteStr[3]);
                       SnImporte:=StrToFloat(copy(SnImporteStr,1,length(SnImporteStr)-3));
                     end
                     else
@@ -1491,10 +1504,20 @@ begin
 
                         if TPosCarga[SnPosCarga].swflujovehiculo then begin
                           ValorPamF:='80'+inttostr(SnPosCarga)+inttostr(xp)+inttostr(TPosCarga[SnPosCarga].flujovehiculo);
+
+                          xprodauto:='000000';
+                          with TPosCarga[SnPosCarga] do begin
+                            for xc:=1 to NoComb do if xc in [1..4] then begin
+                              xp:=TPosx[xc];
+                              if xp in [1..6] then
+                                xprodauto[xp]:='1';
+                            end;
+                          end;
+
                           if VersionPam1000<>'3' then
                             ss:='P'+IntToClaveNum(SnPosCarga,2)+'0'+'1'+'000'+ValorPAMF+'0'
                           else
-                            ss:='@020'+IntToClaveNum(SnPosCarga,2)+'0'+'1'+'0'+ValorPAMF+'100000';
+                            ss:='@020'+IntToClaveNum(SnPosCarga,2)+'0'+'1'+'0'+ValorPAMF+xprodauto;
                           ComandoConsola(ss);
                           EsperaMiliseg(500);
                           ss:='E'+IntToClaveNum(SnPosCarga,2);
@@ -1569,7 +1592,7 @@ begin
                     decImporteStr:=ExtraeElemStrSep(SnLitrosStr,2,'.');
                     if (Length(decImporteStr)=5) and (FlujoPorVehiculo) then begin
                       TPosCarga[SnPosCarga].swflujovehiculo:=true;
-                      TPosCarga[SnPosCarga].flujovehiculo:=StrToInt(decImporteStr[3]+'.'+copy(decImporteStr,4,2));
+                      TPosCarga[SnPosCarga].flujovehiculo:=StrToInt(decImporteStr[3]);
                       SnLitros:=StrToFloat(copy(SnLitrosStr,1,length(SnImporteStr)-3));
                     end
                     else
@@ -1598,10 +1621,20 @@ begin
 
                         if TPosCarga[SnPosCarga].swflujovehiculo then begin
                           ValorPamF:='80'+inttostr(SnPosCarga)+inttostr(xp)+inttostr(TPosCarga[SnPosCarga].flujovehiculo);
+
+                          xprodauto:='000000';
+                          with TPosCarga[SnPosCarga] do begin
+                            for xc:=1 to NoComb do if xc in [1..4] then begin
+                              xp:=TPosx[xc];
+                              if xp in [1..6] then
+                                xprodauto[xp]:='1';
+                            end;
+                          end;
+
                           if VersionPam1000<>'3' then
                             ss:='P'+IntToClaveNum(SnPosCarga,2)+'0'+'1'+'000'+ValorPAMF+'0'
                           else
-                            ss:='@020'+IntToClaveNum(SnPosCarga,2)+'0'+'1'+'0'+ValorPAMF+'100000';
+                            ss:='@020'+IntToClaveNum(SnPosCarga,2)+'0'+'1'+'0'+ValorPAMF+xprodauto;
                           ComandoConsola(ss);
                           EsperaMiliseg(500);
                           ss:='E'+IntToClaveNum(SnPosCarga,2);
@@ -2018,12 +2051,8 @@ begin
           for xpos:=1 to MaxPosCarga do
             if (TPosCarga[xpos].FluStd) or (TPosCarga[xpos].FluMin) then
               rsp:='Comandos en proceso';
-          if (rsp='OK') and (SwEspMin) then begin
+          if (rsp='OK') and (SwEspMin) then
             GuardarLog;
-            Detener;
-            Shutdown;
-            Terminar;
-          end;
         end
         else if ss='SIMADI' then begin
           for xpos:=1 to MaxPosCarga do begin
@@ -3119,21 +3148,19 @@ begin
       config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
       config.WriteString('CONF','ConfAdic',msj);
       config:=nil;
-      if TipoClb<>'5' then begin
-        if TipoClb[1] in ['6','7'] then begin
-          for i:=1 to NoElemStrSep(msj,';') do begin
-            xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
-            mangueras:=ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':');
-            TAdic31[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,1,','),0);
-            TAdic32[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,2,','),0);
-            TAdic33[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,3,','),0);
-            AgregaLog('Flu1: '+FloatToStr(TAdic31[xpos])+', Flu2: '+FloatToStr(TAdic32[xpos])+', Flu3: '+FloatToStr(TAdic33[xpos]));
-          end;
-        end
-        else
-          for i:=1 to NoElemStrSep(msj,';') do
-            tagx[i]:=StrToInt(ExtraeElemStrSep(msj,i,';'));
-      end;
+      if TipoClb[1] in ['5','6','7'] then begin
+        for i:=1 to NoElemStrSep(msj,';') do begin
+          xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
+          mangueras:=ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':');
+          TAdic31[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,1,','),0);
+          TAdic32[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,2,','),0);
+          TAdic33[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,3,','),0);
+          AgregaLog('Flu1: '+FloatToStr(TAdic31[xpos])+', Flu2: '+FloatToStr(TAdic32[xpos])+', Flu3: '+FloatToStr(TAdic33[xpos]));
+        end;
+      end
+      else
+        for i:=1 to NoElemStrSep(msj,';') do
+          tagx[i]:=StrToInt(ExtraeElemStrSep(msj,i,';'));
 
       Result:='True|'+IntToStr(EjecutaComando('FLUSTD'))+'|';
     except
@@ -3163,7 +3190,7 @@ begin
       Result:='True|'+IntToStr(EjecutaComando('FLUACT'))+'|';
     except
       on e:Exception do
-        Result:='False|sError FLUACT: '+e.Message+'|';
+        Result:='False|Error FLUACT: '+e.Message+'|';
     end;
   end
   else
