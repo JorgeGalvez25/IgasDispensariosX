@@ -27,7 +27,7 @@ var
 begin
   Application.Initialize;
 
-  version := '2ad53b46c8346ed3d23c2f3437389e8abc1658ba';
+  version := '02e19f3da66859bbd675de345f62d626f4e1a113';
   config := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
   marca := StrToInt(config.ReadString('CONF', 'Marca', '0'));
   case marca of

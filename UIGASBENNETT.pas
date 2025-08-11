@@ -310,7 +310,6 @@ begin
     on e:exception do begin
       ListaLog.Add('Error al iniciar servicio: '+e.Message);
       ListaLog.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
-      raise Exception.Create('ServiceExecute: '+e.Message);
     end;
   end;
 end;
@@ -1376,7 +1375,7 @@ begin
                     end
                     else
                       SnLitros:=StrToFLoat(ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,3,' '));
-                    rsp:=ValidaCifra(SnLitros,4,0);
+                    rsp:=ValidaCifra(SnLitros,4,2);
                     if rsp='OK' then
                       if (SnLitros<1) then
                         rsp:='Valor en cero no permitido'
