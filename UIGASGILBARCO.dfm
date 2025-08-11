@@ -6,14 +6,6 @@ object SQLGReader: TSQLGReader
   Top = 204
   Height = 191
   Width = 210
-  object ServerSocket1: TServerSocket
-    Active = False
-    Port = 1001
-    ServerType = stNonBlocking
-    OnClientRead = ServerSocket1ClientRead
-    Left = 35
-    Top = 32
-  end
   object pSerial: TApdComPort
     Baud = 5700
     Tracing = tlOn
@@ -22,8 +14,8 @@ object SQLGReader: TSQLGReader
     LogName = 'APRO.LOG'
     OnTriggerAvail = pSerialTriggerAvail
     OnTriggerData = pSerialTriggerData
-    Left = 99
-    Top = 30
+    Left = 112
+    Top = 28
   end
   object Timer1: TTimer
     Enabled = False
@@ -31,5 +23,21 @@ object SQLGReader: TSQLGReader
     OnTimer = Timer1Timer
     Left = 48
     Top = 96
+  end
+  object ClientSocket1: TClientSocket
+    Active = False
+    ClientType = ctNonBlocking
+    Port = 0
+    OnConnect = ClientSocket1Connect
+    OnDisconnect = ClientSocket1Disconnect
+    OnRead = ClientSocket1Read
+    Left = 51
+    Top = 29
+  end
+  object Timer2: TTimer
+    Interval = 200
+    OnTimer = Timer2Timer
+    Left = 112
+    Top = 100
   end
 end
