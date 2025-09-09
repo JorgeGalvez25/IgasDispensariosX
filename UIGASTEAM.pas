@@ -2412,7 +2412,7 @@ function TSQLTReader.ResultadoComando(xFolio: integer): string;
 var i:integer;
 begin
   Result:='*';
-  for i:=1 to 40 do
+  for i:=1 to 200 do
     if (TabCmnd[i].folio=xfolio)and(TabCmnd[i].SwResp) then
       result:=TabCmnd[i].Respuesta;
 end;
