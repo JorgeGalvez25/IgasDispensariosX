@@ -19,7 +19,7 @@ object SQLGReader: TSQLGReader
   end
   object Timer1: TTimer
     Enabled = False
-    Interval = 100
+    Interval = 50
     OnTimer = Timer1Timer
     Left = 48
     Top = 96
