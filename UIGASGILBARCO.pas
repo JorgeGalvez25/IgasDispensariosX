@@ -190,6 +190,8 @@ type
     MangActual: Integer;
     HoraTotales:TDateTime;
     EsDiesel:Boolean;
+    SinComunicacion: Boolean;
+    HoraDesconexion: TDateTime;
   end;
 
   RegCmnd = record
@@ -653,6 +655,10 @@ begin
         repeat
            pSerial.ProcessCommunications;
         until ( ( pSerial.OutBuffUsed=0 ) or ( timerexpired(etTimeOut) ) );
+
+        if bOk then
+          AgregaLog('sRespuesta1 Length: '+IntToStr(length(sRespuesta)));
+
         if ( not bOk ) then begin
           if sw2 then
             newtimer(etTimeOut,MSecs2Ticks(Trunc(GtwTimeout/IfThen(iComando=$20,3,1))))
@@ -936,6 +942,7 @@ function TSQLGReader.EnviaPresetBomba6(xNPos, xNMang, xNPrec: integer; rPesos, r
 var
   sGrade, sPriceLevel, sPresetType, sAmount, sDataBlock: string;
 begin
+  AgregaLog('EnviaPresetBomba6 Pos: '+IntToStr(xNPos));
   if (xNMang = 0) then
     sGrade := ''
   else
@@ -964,6 +971,7 @@ function TSQLGReader.EnviaPresetBomba8(xNPos, xNMang, xNPrec: integer; rPesos, r
 var
   sGrade, sPriceLevel, sPresetType, sAmount, sDataBlock: string;
 begin
+  AgregaLog('EnviaPresetBomba8 Pos: '+IntToStr(xNPos));
   if (xNMang = 0) then
     sGrade := ''
   else
@@ -993,31 +1001,36 @@ var
   i: integer;
 begin
   try
-    sleep(10);
-    bListo:=False;
-    pSerial.FlushInBuffer;
-    pSerial.FlushOutBuffer;
-    AgregaLog('E xEsp '+sDataBlock);
-    for i := 1 to length(sDataBlock) do
-    begin
-      pSerial.PutChar(sDataBlock[i]);
+    Timer1.Enabled:=False;
+    try
+      sleep(10);
+      bListo:=False;
+      pSerial.FlushInBuffer;
+      pSerial.FlushOutBuffer;
+      AgregaLog('E xEsp '+sDataBlock);
+      for i := 1 to length(sDataBlock) do
+      begin
+        pSerial.PutChar(sDataBlock[i]);
+        repeat
+          pSerial.ProcessCommunications;
+        until (pSerial.OutBuffUsed = 0);
+      end;
+      AgregaLog('Mando xEsp');
+      sleep(GtwTiempoCmnd);
+      newtimer(etTimeOut, MSecs2Ticks(GtwTimeout));
       repeat
-        pSerial.ProcessCommunications;
-      until (pSerial.OutBuffUsed = 0);
+        Sleep(5);
+        ServiceThread.ProcessRequests(False);
+      until ((bListo) or (timerexpired(etTimeOut)));        // FALLA
+      AgregaLog('sRespuesta1 xEsp: '+IfThen(bListo,'exitoso','fallido'));
+    except
+      on e:Exception do begin
+        AgregaLog('Error TransmiteComandoEsp: '+e.Message);
+        GuardarLog(0);
+      end;
     end;
-    AgregaLog('Mando xEsp');
-    sleep(GtwTiempoCmnd);
-    newtimer(etTimeOut, MSecs2Ticks(GtwTimeout));
-    repeat
-      Sleep(5);
-      ServiceThread.ProcessRequests(False);
-    until ((bListo) or (timerexpired(etTimeOut)));        // FALLA
-    AgregaLog('sRespuesta1 xEsp: '+IfThen(bListo,'exitoso','fallido'));
-  except
-    on e:Exception do begin
-      AgregaLog('Error TransmiteComandoEsp: '+e.Message);
-      GuardarLog(0);
-    end;
+  finally
+    Timer1.Enabled:=True;
   end;
 end;
 
@@ -1429,6 +1442,7 @@ begin
                         begin
                           if Autoriza(xpos) then
                           begin
+                            AgregaLog('Se autorizó preset Pos: '+IntToStr(xpos));
                             TPosCarga[xpos].SwPreset := true;
                           end
                           else
@@ -1441,6 +1455,7 @@ begin
                       begin
                         if Autoriza(xpos) then
                         begin
+                          AgregaLog('Se autorizó preset Pos: '+IntToStr(xpos));
                           TPosCarga[xpos].SwPreset := true;
                         end
                         else
@@ -1455,6 +1470,7 @@ begin
                         begin
                           if Autoriza(xpos) then
                           begin
+                            AgregaLog('Se autorizó preset Pos: '+IntToStr(xpos));
                             TPosCarga[xpos].SwPreset := true;
                           end
                           else
@@ -1467,6 +1483,7 @@ begin
                       begin
                         if Autoriza(xpos) then
                         begin
+                          AgregaLog('Se autorizó preset Pos: '+IntToStr(xpos));
                           TPosCarga[xpos].SwPreset := true;
                         end
                         else
@@ -1523,6 +1540,7 @@ begin
                       begin
                         if Autoriza(xpos) then
                         begin
+                          AgregaLog('Se autorizó preset Pos: '+IntToStr(xpos));
                           TPosCarga[xpos].SwPreset := true;
                         end
                         else
@@ -1537,6 +1555,7 @@ begin
                       begin
                         if Autoriza(xpos) then
                         begin
+                          AgregaLog('Se autorizó preset Pos: '+IntToStr(xpos));
                           TPosCarga[xpos].SwPreset := true;
                         end
                         else
@@ -1858,10 +1877,11 @@ begin
                 1:if (stciclo=xciclo)or(Estatus>1)or(SwPreset) then
                   begin                           // ESTATUS
                     try
-                      if not swdeshabil then
+                      if (not swdeshabil) and ((not SinComunicacion) or (SecondsBetween(Now, HoraDesconexion) >= RandomRange(55, 65))) then
                       begin   // no polea los que estan deshabilitados
                         EstatusAnt := Estatus;
                         estatusRecibido := DameEstatus(PosCiclo);    // Aqui bota cuando no hay posicion activa
+                        AgregaLog('Se solicitó estatus Pos: '+IntToStr(PosCiclo));
                         if (Estatusant = 0) and (estatusRecibido = 0) then
                           estatus:=0
                         else if (estatusRecibido = 0) then
@@ -1878,6 +1898,7 @@ begin
                           HoraNivelPrecio := Now + 5 * TMSegundo;
                           Swleeventa := true;
                           SwTotales := true;
+                          SinComunicacion := False;
                         end;
                         if (EstatusAnt in [3, 4]) and (Estatus = 1) then
                         begin // Termina Venta
@@ -1889,6 +1910,11 @@ begin
                         end;
                         if estatus = 2 then
                           PosActual := 0;
+                        if (estatusant = 0) and (estatus = 0) then
+                        begin
+                          SinComunicacion := True;
+                          HoraDesconexion := Now;
+                        end;
                         Case TipoClb[1] of
                           '2':begin
                                 if (Estatus=1)and(StFluPos=1)and(swflu) then begin   // Sube
@@ -3321,7 +3347,7 @@ begin
       end;
     end;
   finally
-    Timer2.Enabled:=True;
+    Timer2.Enabled:=estado<=0;
   end;
 end;
 

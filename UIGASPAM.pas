@@ -1855,10 +1855,10 @@ begin
                 else
                   ss:='P'+IntToClaveNum(xposstop,2)+'0'+'1'+'000'+ValorPAM1+'0';
                 TPosCarga[xposstop].HoraPresetFlu:=Now;
-                ComandoConsola(ss);
+                ComandoConsolaBuff(ss);
                 EsperaMiliseg(300);
                 ss:='E'+IntToClaveNum(xposstop,2);
-                ComandoConsola(ss);
+                ComandoConsolaBuff(ss);
                 EsperaMiliseg(200);
                 if PosTarjeta2>0 then begin
                   xprodauto:='000000';

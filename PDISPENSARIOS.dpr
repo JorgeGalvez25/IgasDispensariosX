@@ -16,7 +16,8 @@ uses
   ULIBLICENCIAS in 'ULIBLICENCIAS.pas',
   UIGASGILBARCO in 'UIGASGILBARCO.pas' {SQLGReader: TService},
   UIGASKAIROS in 'UIGASKAIROS.pas' {SQLKReader: TService},
-  UIGASTEAM in 'UIGASTEAM.pas' {SQLTReader: TService};
+  UIGASTEAM in 'UIGASTEAM.pas' {SQLTReader: TService},
+  UIGASWAYNE2W in 'UIGASWAYNE2W.pas' {SQLW2Reader: TService};
 
 {$R *.RES}
 var
@@ -58,6 +59,10 @@ begin
     7:begin
         Application.CreateForm(TSQLKReader, SQLKReader);
         SQLKReader.version := version;
+      end;
+    9:begin
+        Application.CreateForm(TSQLW2Reader, SQLW2Reader);
+        SQLW2Reader.version := version;
       end;
   end;
   Application.Run;

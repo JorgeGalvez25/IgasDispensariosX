@@ -1836,7 +1836,6 @@ begin
       ss:=ListaCmnd[0];
       ListaCmnd.Delete(0);
       ComandoConsola(ss);
-      esperamiliseg(100);
       exit;
     end;
     if NumPaso=2 then begin  // Checa carga de lecturas
