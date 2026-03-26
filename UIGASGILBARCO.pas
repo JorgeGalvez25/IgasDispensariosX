@@ -1068,8 +1068,8 @@ begin
           TAdicf[i, j] := 0;
         DivImporte := GtwDivImporte;
         DivLitros := GtwDivLitros;
-        estatus := -1;
-        estatusant := -1;
+        estatus := 0;
+        estatusant := 0;
         HoraOcc:=0;
         NoComb := 0;
         SwPreset := false;
@@ -1442,7 +1442,7 @@ begin
                         begin
                           if Autoriza(xpos) then
                           begin
-                            AgregaLog('Se autorizó preset Pos: '+IntToStr(xpos));
+                            AgregaLog('Se autorizï¿½ preset Pos: '+IntToStr(xpos));
                             TPosCarga[xpos].SwPreset := true;
                           end
                           else
@@ -1455,7 +1455,7 @@ begin
                       begin
                         if Autoriza(xpos) then
                         begin
-                          AgregaLog('Se autorizó preset Pos: '+IntToStr(xpos));
+                          AgregaLog('Se autorizï¿½ preset Pos: '+IntToStr(xpos));
                           TPosCarga[xpos].SwPreset := true;
                         end
                         else
@@ -1470,7 +1470,7 @@ begin
                         begin
                           if Autoriza(xpos) then
                           begin
-                            AgregaLog('Se autorizó preset Pos: '+IntToStr(xpos));
+                            AgregaLog('Se autorizï¿½ preset Pos: '+IntToStr(xpos));
                             TPosCarga[xpos].SwPreset := true;
                           end
                           else
@@ -1483,7 +1483,7 @@ begin
                       begin
                         if Autoriza(xpos) then
                         begin
-                          AgregaLog('Se autorizó preset Pos: '+IntToStr(xpos));
+                          AgregaLog('Se autorizï¿½ preset Pos: '+IntToStr(xpos));
                           TPosCarga[xpos].SwPreset := true;
                         end
                         else
@@ -1540,7 +1540,7 @@ begin
                       begin
                         if Autoriza(xpos) then
                         begin
-                          AgregaLog('Se autorizó preset Pos: '+IntToStr(xpos));
+                          AgregaLog('Se autorizï¿½ preset Pos: '+IntToStr(xpos));
                           TPosCarga[xpos].SwPreset := true;
                         end
                         else
@@ -1555,7 +1555,7 @@ begin
                       begin
                         if Autoriza(xpos) then
                         begin
-                          AgregaLog('Se autorizó preset Pos: '+IntToStr(xpos));
+                          AgregaLog('Se autorizï¿½ preset Pos: '+IntToStr(xpos));
                           TPosCarga[xpos].SwPreset := true;
                         end
                         else
@@ -1881,7 +1881,7 @@ begin
                       begin   // no polea los que estan deshabilitados
                         EstatusAnt := Estatus;
                         estatusRecibido := DameEstatus(PosCiclo);    // Aqui bota cuando no hay posicion activa
-                        AgregaLog('Se solicitó estatus Pos: '+IntToStr(PosCiclo));
+                        AgregaLog('Se solicitï¿½ estatus Pos: '+IntToStr(PosCiclo));
                         if (Estatusant = 0) and (estatusRecibido = 0) then
                           estatus:=0
                         else if (estatusRecibido = 0) then
