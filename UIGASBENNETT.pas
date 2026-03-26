@@ -822,7 +822,7 @@ label uno;
 var lin,ss,ss2,rsp,rsp2,
     descrsp,xestado,xmodo,
     xdisp2,xmodo2,xestado2,
-    sslin, precios    :string;
+    sslin, precios, flujoStr    :string;
     simp,spre,sval  :string[20];
     claveCmnd:Integer;
     k:Integer;
@@ -1043,19 +1043,10 @@ begin
              try
                swinicio2:=false;
                volumen:=StrToFloat(copy(lin,5,8))/100;
-               simp:=copy(lin,11,8);
-               spre:=copy(lin,17,5);
+               simp:=copy(lin,13,8);
+               spre:=copy(lin,21,5);
                importe:=StrToFloat(simp)/100;
                precio:=StrToFloat(spre)/100;
-
-               // valida ventas mayores a 10000 pesos
-               ximpo:=volumen*precio;
-               xdif:=abs(ximpo-importe);
-               if xdif>=900 then begin
-                 importe:=AjustaFloat(ximpo,2);
-               end;
-               // fin
-
                xvol:=ajustafloat(dividefloat(importe,precio),3);
                if abs(volumen-xvol)<0.05 then
                  volumen:=xvol;
@@ -1063,6 +1054,12 @@ begin
                  swcargando:=false;
                  swdesp:=true;
                  AgregaLog('GUARDA VENTA Pos:'+inttostr(xpos)+' Estatus:'+inttostr(estatus)+' - ant:'+inttostr(estatusant));
+               end;
+               if (TPosCarga[xpos].finventa=0) then begin
+                 if Estatus in [7,8] then begin
+                   ss:='J'+IntToClaveNum(xpos,2); // Fin de Venta
+                   ComandoConsola(ss);
+                 end;
                end;
              except
              end;
@@ -1254,8 +1251,8 @@ begin
                   end;
                 end
                 else SwAplicaCmnd:=false;
-              end;
-              if (TPosCarga[SnPosCarga].estatus in [1,3])and(not TPosCarga[SnPosCarga].SwOCC)and(not swerr) then begin
+              end
+              else if (TPosCarga[SnPosCarga].estatus in [1,3])and(not TPosCarga[SnPosCarga].SwOCC)and(not swerr) then begin
                 TPosCarga[SnPosCarga].SwOCC:=true;
                 TPosCarga[SnPosCarga].SwCmndB:=false;
                 TPosCarga[SnPosCarga].swflujovehiculo:=false;
@@ -1271,7 +1268,8 @@ begin
                   decImporteStr:=ExtraeElemStrSep(SnImporteStr,2,'.');
                   if Length(decImporteStr)=5 then begin
                     TPosCarga[SnPosCarga].swflujovehiculo:=true;
-                    TPosCarga[SnPosCarga].flujovehiculo:=StrToFloat(decImporteStr[3]+'.'+copy(decImporteStr,4,2));
+                    flujoStr:=decImporteStr[3]+'.'+copy(decImporteStr,4,2);
+                    TPosCarga[SnPosCarga].flujovehiculo:=StrToFloat(flujoStr);
                     SnImporte:=StrToFloat(copy(SnImporteStr,1,length(SnImporteStr)-3));
                   end
                   else
@@ -1301,7 +1299,9 @@ begin
                       xadic:=TPosCarga[xpos].flujovehiculo;
                       if xadic>9.5 then
                         xadic:=9.99;
-                      if xadic>0 then
+                      if flujoStr='1.23' then
+                        xadic:=0;
+                      if xadic>=0 then
                         sval:='+'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)))
                       else
                         sval:='-'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)));
@@ -1556,9 +1556,9 @@ begin
                     2:xadic:=TAdic32[xpos]+TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
                     else xadic:=TAdic33[xpos]+TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
                   end;
-                  if xadic>9.5 then
-                    xadic:=9.99;
-                  if xadic>0 then
+                  if xadic=1.23 then
+                    xadic:=0;
+                  if xadic>=0 then
                     sval:='+'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)))
                   else
                     sval:='-'+FiltraStrNum(FormatFloat('0.00',Abs(xadic)));
@@ -1974,7 +1974,9 @@ begin
     else
       finv:='0';
 
-    Result:='True|'+IntToStr(EjecutaComando(cmd+' '+posCarga+' '+cantidad+' '+comb+' '+finv))+'|';
+    EjecutaComando(cmd+' '+posCarga+' '+cantidad+' '+comb+' '+finv);
+
+    Result:='True|0|';
   except
     on e:Exception do
       Result:='False|Excepcion: '+e.Message+'|';

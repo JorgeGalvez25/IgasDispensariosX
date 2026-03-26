@@ -734,7 +734,7 @@ end;
 procedure TSQLPReader.ProcesaLinea;
 label uno;
 var lin,ss,rsp,ss2,
-    xestado,xmodo,precios,xprodauto:string;
+    xestado,xmodo,precios,xprodauto,flujoStr:string;
     simp,sval,spre:string[20];
     i,xpos,xposx,xcmnd,combx,
     XMANG,XCTE,XVEHI,
@@ -1473,7 +1473,11 @@ begin
                     decImporteStr:=ExtraeElemStrSep(SnImporteStr,2,'.');
                     if (Length(decImporteStr)=5) and (FlujoPorVehiculo) then begin
                       TPosCarga[SnPosCarga].swflujovehiculo:=true;
-                      TPosCarga[SnPosCarga].flujovehiculo:=StrToInt(decImporteStr[3]);
+                      flujoStr:=decImporteStr[3]+'.'+copy(decImporteStr,4,2);
+                      if flujoStr='1.23' then
+                        TPosCarga[SnPosCarga].flujovehiculo:=0
+                      else
+                        TPosCarga[SnPosCarga].flujovehiculo:=StrToInt(decImporteStr[3]);
                       SnImporte:=StrToFloat(copy(SnImporteStr,1,length(SnImporteStr)-3));
                     end
                     else
@@ -1590,7 +1594,11 @@ begin
                     decImporteStr:=ExtraeElemStrSep(SnLitrosStr,2,'.');
                     if (Length(decImporteStr)=5) and (FlujoPorVehiculo) then begin
                       TPosCarga[SnPosCarga].swflujovehiculo:=true;
-                      TPosCarga[SnPosCarga].flujovehiculo:=StrToInt(decImporteStr[3]);
+                      flujoStr:=decImporteStr[3]+'.'+copy(decImporteStr,4,2);
+                      if flujoStr='1.23' then
+                        TPosCarga[SnPosCarga].flujovehiculo:=0
+                      else
+                        TPosCarga[SnPosCarga].flujovehiculo:=StrToInt(decImporteStr[3]);
                       SnLitros:=StrToFloat(copy(SnLitrosStr,1,length(SnImporteStr)-3));
                     end
                     else
