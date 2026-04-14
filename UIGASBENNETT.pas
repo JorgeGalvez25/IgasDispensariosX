@@ -177,6 +177,7 @@ type
        swflujovehiculo:boolean;
        flujovehiculo  :Real;
        HoraTotales:TDateTime;
+       SwError9PostVenta:boolean; 
      end;
 
      RegCmnd = record
@@ -901,6 +902,7 @@ begin
                1:begin
                    descestat:='Inactivo';
                    swcargando:=false;
+                   SwError9PostVenta:=false;
                    if swprec then
                      swprec:=false;
                    if estatusant<>1 then begin
@@ -961,7 +963,14 @@ begin
                      ComandoConsolaBuff('J'+IntToClaveNum(xpos,2),False);
                  end;
                8:descestat:='Venta Pendiente';
-               9:descestat:='Error';
+               9:begin 
+                   descestat:='Error';
+                   if (estatusant = 7) and (not SwError9PostVenta) then begin
+                     SwError9PostVenta := true;
+                     AgregaLog('Error9 post Fin de Venta Pos:' + IntToStr(xpos) +
+                               ' Vol:' + FormatFloat('0.000', volumen));
+                   end;
+                 end;
              end;
            end;
          end;
@@ -1024,7 +1033,7 @@ begin
                xvol:=ajustafloat(dividefloat(importe,precio),3);
                if abs(volumen-xvol)<0.05 then
                  volumen:=xvol;
-               if (Estatus in [7,8])and(swcargando) then begin
+               if ((Estatus in [7,8]) or ((Estatus=9) and SwError9PostVenta)) and (swcargando) then begin
                  swcargando:=false;
                  swdesp:=true;
                  AgregaLog('GUARDA VENTA Pos:'+inttostr(xpos)+' Estatus:'+inttostr(estatus)+' - ant:'+inttostr(estatusant));
@@ -1050,7 +1059,7 @@ begin
                xvol:=ajustafloat(dividefloat(importe,precio),3);
                if abs(volumen-xvol)<0.05 then
                  volumen:=xvol;
-               if (Estatus in [7,8])and(swcargando) then begin
+               if ((Estatus in [7,8]) or ((Estatus=9) and SwError9PostVenta)) and (swcargando) then begin
                  swcargando:=false;
                  swdesp:=true;
                  AgregaLog('GUARDA VENTA Pos:'+inttostr(xpos)+' Estatus:'+inttostr(estatus)+' - ant:'+inttostr(estatusant));
@@ -1158,19 +1167,19 @@ begin
     end;
     // FIN
 
-//    if PosicionActual<MaxPosCargaActiva then begin
-//      repeat
-//        Inc(PosicionActual);
-//        with TPosCarga[PosicionActual] do if NoComb>0 then begin
-//          if swcargatotales then begin
-//            inc(intentostotales);
-//            if intentostotales>3 then
-//              swcargatotales:=false;
-//            ComandoConsolaBuff('N'+IntToClaveNum(PosicionActual,2),false); // Totales
-//          end;
-//        end;
-//      until (PosicionActual>=MaxPosCargaActiva);
-//    end;
+    if PosicionActual<MaxPosCargaActiva then begin
+      repeat
+        Inc(PosicionActual);
+        with TPosCarga[PosicionActual] do if NoComb>0 then begin
+          if swcargatotales then begin
+            inc(intentostotales);
+            if intentostotales>3 then
+              swcargatotales:=false;
+            ComandoConsolaBuff('N'+IntToClaveNum(PosicionActual,2),false); // Totales
+          end;
+        end;
+      until (PosicionActual>=MaxPosCargaActiva);
+    end;
     if not SwEsperaRsp then begin
       NumPaso:=4;
       PosicionActual:=0;
@@ -1528,13 +1537,23 @@ begin
                 SwAplicaCmnd:=True;
               end
             end
-            else if (estatus=9) and (SecondsBetween(Now,HoraFinv)<=5) and (SecondsBetween(Now,HoraTotales)>30) then begin
-              TotalLitros[MangActual]:=TotalLitros[MangActual]+volumen;
-              HoraTotales:=Now;
-              rsp:='OK'+FormatFloat('0.000',ToTalLitros[1])+'|'+FormatoMoneda(ToTalLitros[1]*LPrecios[TComb[1]])+'|'+
-                              FormatFloat('0.000',ToTalLitros[2])+'|'+FormatoMoneda(ToTalLitros[2]*LPrecios[TComb[2]])+'|'+
-                              FormatFloat('0.000',ToTalLitros[3])+'|'+FormatoMoneda(ToTalLitros[3]*LPrecios[TComb[3]]);
-              SwAplicaCmnd:=True;
+            else if (estatus = 9) and (SwError9PostVenta) then begin 
+              if (MangActual in [1..MCxP]) and (volumen > 0.001) then begin
+                TotalLitros[MangActual] := TotalLitros[MangActual] + volumen;
+                AgregaLog('Total Calculado Error9 Pos:' + IntToStr(xpos) +
+                          ' Mang:' + IntToStr(MangActual) +
+                          ' Vol:' + FormatFloat('0.000', volumen) +
+                          ' NuevoTotal:' + FormatFloat('0.000', TotalLitros[MangActual]));
+              end;
+              SwError9PostVenta := false;
+              HoraTotales := Now;
+              rsp := 'OK' + FormatFloat('0.000', TotalLitros[1]) + '|' +
+                     FormatoMoneda(TotalLitros[1] * LPrecios[TComb[1]]) + '|' +
+                     FormatFloat('0.000', TotalLitros[2]) + '|' +
+                     FormatoMoneda(TotalLitros[2] * LPrecios[TComb[2]]) + '|' +
+                     FormatFloat('0.000', TotalLitros[3]) + '|' +
+                     FormatoMoneda(TotalLitros[3] * LPrecios[TComb[3]]);
+              SwAplicaCmnd := True;
             end
             else
               SwAplicaCmnd:=False;
