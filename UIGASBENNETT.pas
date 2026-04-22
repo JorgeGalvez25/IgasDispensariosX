@@ -49,6 +49,7 @@ type
     CantProtec:Integer;
     MapCombs:string;
     swflujostd,swflumin:Boolean;
+    swFluStdSoloCalib:Boolean;
     TAdic31   :array[1..32] of real;
     TAdic32   :array[1..32] of real;
     TAdic33   :array[1..32] of real;
@@ -116,7 +117,7 @@ type
     function IniciaPSerial(datosPuerto:string):string;
     function EstadoPosiciones(msj: string):string;
     function TotalesBomba(msj: string):string;
-    function FluStd(msj: string):string;
+    function FluStd(msj: string; nuevo: Boolean):string;
     function FluMin(msj: string):string;
     function Shutdown:string;
     function Terminar:string;
@@ -350,7 +351,7 @@ begin
           EJECCMND_e:
             Socket.SendText('DISPENSERSX|EJECCMND|True|'+IntToStr(EjecutaComando(parametro))+'|');
           FLUSTD_e:
-            Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro));
+            Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro,True));
           FLUMIN_e:
             Socket.SendText('DISPENSERSX|FLUMIN|'+FluMin(parametro));
           RESPCMND_e:
@@ -1570,10 +1571,14 @@ begin
                   xp:=TPosCarga[xpos].TPos[xcmb];
                   ss:='Z'+IntToClaveNum(xpos,2);
                   ss:=ss+InttoClaveNum(TPosCarga[xpos].TAjuPos[xp],4);
-                  case xp of
-                    1:xadic:=TAdic31[xpos]+TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
-                    2:xadic:=TAdic32[xpos]+TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
-                    else xadic:=TAdic33[xpos]+TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
+                  if swFluStdSoloCalib then
+                    xadic:=TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)]
+                  else begin
+                    case xp of
+                      1:xadic:=TAdic31[xpos]+TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
+                      2:xadic:=TAdic32[xpos]+TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
+                      else xadic:=TAdic33[xpos]+TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
+                    end;
                   end;
                   if xadic=1.23 then
                     xadic:=0;
@@ -1585,9 +1590,14 @@ begin
                   //ComandoConsolaBuff(ss,true);
                   TPosCarga[xpos].TCmndZ[xp]:=ss;
                 end;
-                // Fin ver4.4
                 SwFlujoStd:=true;
+                if swFluStdSoloCalib then
+                  ProcesaFlujo(xpos, True);
               end;
+            end;
+            if swFluStdSoloCalib then begin
+              swFluStdSoloCalib:=False;
+              FluStd(ConfAdic,False);
             end;
           end
           else begin // if licencia2ok
@@ -1845,8 +1855,10 @@ begin
     Timer1.Enabled:=True;
     numPaso:=0;
 
-    if ConfAdic<>'' then
-      FluStd(ConfAdic);
+    if ConfAdic<>'' then begin
+      swFluStdSoloCalib := True;
+      FluStd(ConfAdic, False);
+    end;
 
     Result:='True|';
   except
@@ -2485,7 +2497,7 @@ begin
 
 end;
 
-function TSQLBReader.FluStd(msj: string): string;
+function TSQLBReader.FluStd(msj: string; nuevo: Boolean): string;
 var
   i,j,xpos:Integer;
   mangueras,mang:string;
@@ -2495,10 +2507,12 @@ begin
   if Licencia3Ok then begin
     try
       for i:=1 to NoElemStrSep(msj,';') do begin
+        if ExtraeElemStrSep(msj,i,';')='' then Continue;
         xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
         mangueras:=ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':');
         with TPosCarga[xpos] do begin
           for j:=1 to NoElemStrSep(mangueras,',') do begin
+            if ExtraeElemStrSep(mangueras, j, ',') = '' then Continue;
             mang:=ExtraeElemStrSep(mangueras,j,',');
             if NoElemStrSep(mang,'-')>1 then begin
               Flu[j]:=StrToFloatDef(ExtraeElemStrSep(mang,1,'-'),0);
@@ -2518,9 +2532,11 @@ begin
           AgregaLog('Cali1: '+FloatToStr(Tadic[1])+', '+'Cali2: '+FloatToStr(Tadic[2])+', '+'Cali3: '+FloatToStr(Tadic[3]));
         end;
       end;
-      config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
-      config.WriteString('CONF','ConfAdic',msj);
-      config:=nil;
+      if nuevo then begin
+        config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
+        config.WriteString('CONF','ConfAdic',msj);
+        config:=nil;
+      end;
       Result:='True|'+IntToStr(EjecutaComando('FLUSTD'))+'|';
     except
       on e:Exception do
@@ -2555,7 +2571,7 @@ begin
     xp:=TPosCarga[xpos].TPos[xcmb];
     if swarriba then begin  // arriba
       if swflujostd then
-        ComandoConsolaBuff(TPosCarga[xpos].TCmndZ[xp],true);
+        ComandoConsolaBuff(TPosCarga[xpos].TCmndZ[IfThen(xp=4,3,xp)],true);
     end
     else begin // abajo
       xadic:=TPosCarga[xpos].Tadic[IfThen(xp=4,3,xp)];
