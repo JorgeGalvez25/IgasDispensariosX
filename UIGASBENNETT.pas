@@ -177,6 +177,7 @@ type
        MangActual:Integer;
        swflujovehiculo:boolean;
        flujovehiculo  :Real;
+       auxprotec      :integer;
        HoraTotales:TDateTime;
        SwError9PostVenta:boolean; 
      end;
@@ -661,6 +662,7 @@ begin
       SwPresetHora:=false;
       SwAdic:=false;
       swflujovehiculo:=False;
+      auxprotec:=0;
       HoraTotales:=0;
     end;
 
@@ -838,7 +840,9 @@ var lin,ss,ss2,rsp,rsp2,
     xprecio,xvol,
     xadic    :real;
     swerr           :boolean;
+    swaux           :boolean;
     totlts:array[1..4] of real;
+    config: TIniFile;
     SnImporteStr,SnLitrosStr,decImporteStr:String;
 begin
   if (minutosLog>0) and (MinutesBetween(Now,horaLog)>=minutosLog) then begin
@@ -901,6 +905,7 @@ begin
                    descestat:='---';
                  end;
                1:begin
+                   auxprotec:=0;
                    descestat:='Inactivo';
                    swcargando:=false;
                    SwError9PostVenta:=false;
@@ -995,14 +1000,36 @@ begin
                3:if (not SwDesHabilitado)and(ModoOpera='Normal') then begin
                    if ContPreset<=0 then begin
                      FinVenta:=0;
-                     if (swflujostd) and (not swflujovehiculo) then begin
-                       ProcesaFlujo(xpos,true);
-                       esperamiliseg(100);
+                     swaux:=true;
+                     if CantProtec>0 then begin
+                       if auxprotec<2 then begin
+                         inc(auxprotec);
+                         ComandoConsola('Y'+IntToClaveNum(xpos,2));
+                         esperamiliseg(100);
+                         swaux:=false;
+                       end;
                      end;
-                     ss:='S'+IntToClaveNum(xpos,2); // Autorizar
-                     ComandoConsolaBuff(ss,false);
-                     presetimpo:=0;presetimpon:=0;
-                     SwInicio:=false;
+                     if swaux then begin
+                       if swflujovehiculo then begin
+                         // Proteccion detectada: aplica flujo 0 al dispensario.
+                         // El flujo previo (TCmndZ) se restaurara automaticamente
+                         // al finalizar la venta, en el bloque de estatus 1.
+                         for xcmb:=1 to NoComb do begin
+                           xp:=TPos[xcmb];
+                           ss:='Z'+IntToClaveNum(xpos,2)+IntToClaveNum(TAjuPos[xp],4)+'+0.00';
+                           ComandoConsolaBuff(ss,False);
+                         end;
+                         esperamiliseg(100);
+                       end
+                       else if swflujostd then begin
+                         ProcesaFlujo(xpos,true);
+                         esperamiliseg(100);
+                       end;
+                       ss:='S'+IntToClaveNum(xpos,2); // Autorizar
+                       ComandoConsolaBuff(ss,false);
+                       presetimpo:=0;presetimpon:=0;
+                       SwInicio:=false;
+                     end;
                    end;
                  end;
              end;
@@ -1092,6 +1119,22 @@ begin
                if TPos[j] in [1..4] then
                  TotalLitros[j]:=TotLts[TPos[j]];
              HoraTotales:=Now;
+           end;
+         end;
+       end;
+   'Y':begin // proteccion lts
+         if lin[4]='2' then begin
+           xpos:=StrToIntDef(copy(lin,2,2),0);
+           if (xpos>=1)and(xpos<=MaximoDePosiciones) then begin
+             if TPosCarga[xpos].auxprotec>=1 then begin
+               ii:=StrToInt(copy(lin,5,3));
+               AgregaLog('AuxProtec:'+IntToStr(TPosCarga[xpos].auxprotec)+'  '+IntToStr(ii));
+               for i:=1 to CantProtec do begin
+                 AgregaLog('Protec:'+IntToStr(TabProtec[i]));
+                 if ii=TabProtec[i] then
+                   TPosCarga[xpos].swflujovehiculo:=true;
+               end;
+             end;
            end;
          end;
        end;
@@ -1631,6 +1674,11 @@ begin
           for j:=1 to 10 do
             TabProtec[j]:=0;
           BennettProtec:=ExtraeElemStrSep(TabCmnd[claveCmnd].Comando,2,' ');
+
+          config := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
+          config.WriteString('CONF', 'BennettProtec', BennettProtec);
+          config := nil;
+
           if BennettProtec<>'' then begin
             CantProtec:=NoElemStrSep(BennettProtec,';');
             if CantProtec>10 then
