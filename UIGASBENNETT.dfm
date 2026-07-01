@@ -6,11 +6,14 @@ object SQLBReader: TSQLBReader
   Top = 349
   Height = 194
   Width = 290
-  object ServerSocket1: TServerSocket
+  object ClientSocket1: TClientSocket
     Active = False
-    Port = 8585
-    ServerType = stNonBlocking
-    OnClientRead = ServerSocket1ClientRead
+    ClientType = ctNonBlocking
+    Host = '127.0.0.1'
+    Port = 1004
+    OnConnect = ClientSocket1Connect
+    OnDisconnect = ClientSocket1Disconnect
+    OnRead = ClientSocket1Read
     Left = 34
     Top = 32
   end
@@ -26,6 +29,13 @@ object SQLBReader: TSQLBReader
     Interval = 150
     OnTimer = Timer1Timer
     Left = 47
+    Top = 96
+  end
+  object Timer2: TTimer
+    Enabled = True
+    Interval = 1000
+    OnTimer = Timer2Timer
+    Left = 116
     Top = 96
   end
 end
