@@ -1017,7 +1017,7 @@ begin
   try
     Timer1.Enabled:=False;
     try
-      iMaxIntentos:=2;
+      iMaxIntentos:=1;
       iBytesEsperados:=13;
       iNoIntento:= 0;
       bOk:=false;
@@ -2012,8 +2012,10 @@ begin
                       end;
                       if (EstatusAnt in [3,4])and(Estatus=1) then begin
                         swcargando:=false;
-                        if EsperaFinVenta=1 then
-                          Estatus:=4;
+                        if (EsperaFinVenta=1) and (volumen>0) then
+                          Estatus:=3
+                        else
+                          EsperaFinVenta:=0;
                       end;
                       if (estatusant = 0) and (estatus = 0) then
                       begin
@@ -2256,7 +2258,7 @@ begin
   try
     Timer1.Enabled:=False;
     try
-      iMaxIntentos:=2;
+      iMaxIntentos:=1;
       iBytesEsperados:=13;
       iNoIntento:= 0;
       bOk:=false;
