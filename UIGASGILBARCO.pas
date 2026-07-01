@@ -1640,23 +1640,29 @@ begin
         end
         else if (ss = 'TOTAL') then
         begin
-          xpos := StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].comando, 2, ' '), 0);
+          xpos := StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando, 2, ' '), 0);
           rsp := 'OK';
           with TPosCarga[xpos] do
           begin
-            if TabCmnd[xcmnd].SwNuevo then
+            if (estatus <> 1) then
             begin
-              swtotales := True;
-              TabCmnd[xcmnd].SwNuevo := false;
-            end;
-            if (not swtotales) or (SecondsBetween(Now,HoraTotales)<=10) then
-            begin
-              swtotales:=False;
-              rsp := 'OK' + FormatFloat('0.000', ToTalLitros[1]) + '|' + FormatoMoneda(ToTalLitros[1] * LPrecios[TComb[1]]) + '|' + FormatFloat('0.000', ToTalLitros[2]) + '|' + FormatoMoneda(ToTalLitros[2] * LPrecios[TComb[2]]) + '|' + FormatFloat('0.000', ToTalLitros[3]) + '|' + FormatoMoneda(ToTalLitros[3] * LPrecios[TComb[3]]) + '|';
+              rsp := 'Posicion no disponible';
               SwAplicaCmnd := True;
             end
-            else
-              SwAplicaCmnd := False;
+            else begin
+              if TabCmnd[xcmnd].SwNuevo then
+              begin
+                swtotales := True;
+                TabCmnd[xcmnd].SwNuevo := false;
+              end;
+              if (not swtotales) or (SecondsBetween(Now, HoraTotales) <= 10) then
+              begin
+                rsp := 'OK' + FormatFloat('0.000', ToTalLitros[1]) + '|' + FormatoMoneda(ToTalLitros[1] * LPrecios[TComb[1]]) + '|' + FormatFloat('0.000', ToTalLitros[2]) + '|' + FormatoMoneda(ToTalLitros[2] * LPrecios[TComb[2]]) + '|' + FormatFloat('0.000', ToTalLitros[3]) + '|' + FormatoMoneda(ToTalLitros[3] * LPrecios[TComb[3]]) + '|';
+                SwAplicaCmnd := True;
+              end
+              else
+                SwAplicaCmnd := False;
+            end;
           end;
         end
         else if (ss = 'CPREC') then
@@ -3316,19 +3322,23 @@ end;
 
 procedure TSQLGReader.Timer2Timer(Sender: TObject);
 var
-  i:Integer;
-  json:String;
+  i: Integer;
+  json: string;
 begin
   try
     try
-      Timer2.Enabled:=False;
-      if not conectado then begin
-        ClientSocket1.Active:=True;
-        for i:=0 to 100 do begin
+      Timer2.Enabled := False;
+      if not conectado then
+      begin
+        ClientSocket1.Active := True;
+        for i := 0 to 100 do
+        begin
           Sleep(10);
-          if conectado then Break;
+          if conectado then
+            Break;
         end;
-        if not conectado then Exit;
+        if not conectado then
+          Exit;
       end;
 
       if not respJson then
@@ -3336,18 +3346,20 @@ begin
       else
         Responder(TlkJSON.GenerateText(rootJSON));
 
-      if estado>0 then begin
-        Timer2.Enabled:=False;
-        Timer1.Enabled:=True;
+      if estado > 0 then
+      begin
+        Timer2.Enabled := False;
+        Timer1.Enabled := True;
       end;
     except
-      on e:Exception do begin
-        AgregaLog('Error Timer2Timer: '+e.Message);
+      on e: Exception do
+      begin
+        AgregaLog('Error Timer2Timer: ' + e.Message);
         GuardarLog(0);
       end;
     end;
   finally
-    Timer2.Enabled:=estado<=0;
+    Timer2.Enabled := (not conectado) or (estado<=0);
   end;
 end;
 
