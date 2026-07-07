@@ -49,6 +49,8 @@ type
     function TransmiteComando(iComando, xNPos: integer; sDataBlock: string): boolean;
     procedure TransmiteComandoEsp(sDataBlock: string);
     function DataControlWordValue(chDataControlWord: char; iLongitud: integer): longint;
+    function ValidaLRC(const sDatos: string): boolean;
+    function ValidaFinDataBlock(const sDatos: string): boolean;
   public
     ListaLog: TStringList;
     ListaLogPetRes: TStringList;
@@ -214,6 +216,7 @@ const
   MaxEsperaRsp = 5;
   MaxEspera2 = 20;
   MaxEspera3 = 10;
+  MaxIntentosLRC = 3;
 
 type
   TMetodos = (NOTHING_e, INITIALIZE_e, PARAMETERS_e, LOGIN_e, LOGOUT_e, PRICES_e, AUTHORIZE_e, STOP_e, START_e, SELFSERVICE_e, FULLSERVICE_e, BLOCK_e, UNBLOCK_e,
@@ -619,7 +622,10 @@ begin
           end;
         end
         else begin
-          iMaxIntentos:= 1;
+          if ( iComando in [$40,$50] ) then
+            iMaxIntentos:= MaxIntentosLRC
+          else
+            iMaxIntentos:= 1;
           if TPosCarga[xpos].DigitosGilbarco=6 then begin
             if ( iComando=$40 ) then
                iBytesEsperados:= 33
@@ -678,10 +684,14 @@ begin
                  bOk:= ( ( LoNibbleChar(sRespuesta[1])=xNPos ) and ( HiNibbleChar(sRespuesta[1])=$D ) );
               end
               else if ( iComando=$40 ) then begin
-                bOk:= ( length(sRespuesta)>31 );
+                bOk:= ( length(sRespuesta)>31 ) and ValidaFinDataBlock(sRespuesta) and ValidaLRC(sRespuesta);
+                if not bOk then
+                  AgregaLog('LRC/ETX invalido en respuesta $40 (6 dig): posible bit-flip en puerto serial');
               end
               else if ( iComando=$50 ) then begin
-                bOk:= ( ( ( length(sRespuesta) - 4) mod 30)=0 );
+                bOk:= ( ( ( length(sRespuesta) - 4) mod 30)=0 ) and ValidaFinDataBlock(sRespuesta) and ValidaLRC(sRespuesta);
+                if not bOk then
+                  AgregaLog('LRC/ETX invalido en respuesta $50 (6 dig): posible bit-flip en puerto serial');
               end
               else if ( iComando=$60 ) then begin
                  bOk:= ( length(sRespuesta)=6 );
@@ -696,10 +706,14 @@ begin
                  bOk:= ( ( LoNibbleChar(sRespuesta[1])=xNPos ) and ( HiNibbleChar(sRespuesta[1])=$D ) );
               end
               else if ( iComando=$40 ) then begin
-                bOk:= ( length(sRespuesta)>37 );
+                bOk:= ( length(sRespuesta)>37 ) and ValidaFinDataBlock(sRespuesta) and ValidaLRC(sRespuesta);
+                if not bOk then
+                  AgregaLog('LRC/ETX invalido en respuesta $40 (8 dig): posible bit-flip en puerto serial');
               end
               else if ( iComando=$50 ) then begin
-                bOk:= ( ( ( length(sRespuesta) - 4) mod 42)=0 );
+                bOk:= ( ( ( length(sRespuesta) - 4) mod 42)=0 ) and ValidaFinDataBlock(sRespuesta) and ValidaLRC(sRespuesta);
+                if not bOk then
+                  AgregaLog('LRC/ETX invalido en respuesta $50 (8 dig): posible bit-flip en puerto serial');
               end
               else if ( iComando=$60 ) then begin
                 bOk:= ( length(sRespuesta)=8 );
@@ -776,6 +790,29 @@ begin
   else
     xValor := BcdToInt(copy(sRespuesta, iPosicion + 1, iLongitud));
   result := xValor;
+end;
+
+function TSQLGReader.ValidaLRC(const sDatos: string): boolean;
+var
+  iSumaNibbles, iNibbleCalculado, iNibbleRecibido, i: integer;
+begin
+  result := false;
+  if length(sDatos) < 3 then
+    Exit;
+
+  iSumaNibbles := 0;
+  for i := 1 to length(sDatos) - 2 do
+    iSumaNibbles := iSumaNibbles + (ord(sDatos[i]) and $0F);
+
+  iNibbleCalculado := ((iSumaNibbles xor $0F) + 1) and $0F;
+  iNibbleRecibido := ord(sDatos[length(sDatos) - 1]) and $0F;
+
+  result := (iNibbleCalculado = iNibbleRecibido);
+end;
+
+function TSQLGReader.ValidaFinDataBlock(const sDatos: string): boolean;
+begin
+  result := (length(sDatos) > 0) and (sDatos[length(sDatos)] = #$F0);
 end;
 
 function TSQLGReader.DameTotales6(xNPos: integer; var rTotalizadorLitros1, rTotalizadorPesos1, rTotalizadorLitros2, rTotalizadorPesos2, rTotalizadorLitros3, rTotalizadorPesos3: real): boolean;
