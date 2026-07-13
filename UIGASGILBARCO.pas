@@ -47,7 +47,7 @@ type
     rootJSON : TlkJSONbase;
     socketResponse : TCustomWinSocket;
     function TransmiteComando(iComando, xNPos: integer; sDataBlock: string): boolean;
-    procedure TransmiteComandoEsp(sDataBlock: string);
+    function TransmiteComandoEsp(sDataBlock: string): boolean;
     function DataControlWordValue(chDataControlWord: char; iLongitud: integer): longint;
     function ValidaLRC(const sDatos: string): boolean;
     function ValidaFinDataBlock(const sDatos: string): boolean;
@@ -1033,10 +1033,11 @@ begin
   result := (TransmiteComando($20, xNPos, sDataBlock));
 end;
 
-procedure TSQLGReader.TransmiteComandoEsp(sDataBlock: string);
+function TSQLGReader.TransmiteComandoEsp(sDataBlock: string): boolean;
 var
   i: integer;
 begin
+  Result := False;
   try
     Timer1.Enabled:=False;
     try
@@ -1060,10 +1061,12 @@ begin
         ServiceThread.ProcessRequests(False);
       until ((bListo) or (timerexpired(etTimeOut)));        // FALLA
       AgregaLog('sRespuesta1 xEsp: '+IfThen(bListo,'exitoso','fallido'));
+      Result := bListo;
     except
       on e:Exception do begin
         AgregaLog('Error TransmiteComandoEsp: '+e.Message);
         GuardarLog(0);
+        Result := False;
       end;
     end;
   finally
@@ -1832,16 +1835,32 @@ end;
 function TSQLGReader.EnviaPresetFlu(xpos: integer; xsube: boolean): boolean;
 var
   ximporte: real;
+  xTagFlu: integer;
 begin
   result := true;
   try
     if xsube then
-      ximporte := StrToIntDef(IfThen(TPosCarga[xpos].EsDiesel, ValorXD, ValorX) + inttostr(tagx[1]), 0) / 100
+    begin
+      xTagFlu := IfThen(TPosCarga[xpos].EsDiesel, tagx[2], tagx[1]);
+      ximporte := StrToIntDef(IfThen(TPosCarga[xpos].EsDiesel, ValorXD, ValorX) + inttostr(xTagFlu), 0) / 100;
+    end
     else
       ximporte := StrToIntDef(IfThen(TPosCarga[xpos].EsDiesel, ValorXD, ValorX) + '0', 0) / 100;
     AgregaLog('Preset Posicion ' + inttoclavenum(xpos, 2) + ' $' + FormatoMoneda(ximporte));
     if TPosCarga[xPos].DigitosGilbarco=6 then
-      EnviaPresetBomba6x(xpos,ximporte)
+    begin
+      if EnviaPresetBomba6(xpos, 1, 1, ximporte, 0) then
+      begin
+        if Autoriza(xpos) then
+        begin
+          TPosCarga[xpos].SwPreset := true;
+        end
+        else
+          result := false;
+      end
+      else
+        result := false;
+    end
     else
     begin
       if EnviaPresetBomba8(xpos, 1, 1, ximporte, 0) then
@@ -1974,10 +1993,7 @@ begin
                                ((CombPendiente=0) or ((CombPendiente=3) and (EsDiesel)) or ((CombPendiente=1) and (not EsDiesel))) then begin // Manda Flu
                               if EnviaPresetFlu(PosCiclo,true) then begin
                                 AgregaLog('Envio correcto preset flustd');
-                                if TPosCarga[PosCiclo].DigitosGilbarco=6 then
-                                  StFlu:=0
-                                else
-                                  StFlu:=2;
+                                StFlu:=2;
                                 PosFlu:=PosCiclo;
                               end;
                             end;
@@ -1985,10 +2001,7 @@ begin
                                ((CombPendiente=0) or ((CombPendiente=3) and (EsDiesel)) or ((CombPendiente=1) and (not EsDiesel))) then begin // Manda Flu
                               if EnviaPresetFlu(PosCiclo,false) then begin
                                 AgregaLog('Envio correcto preset flumin');
-                                if TPosCarga[PosCiclo].DigitosGilbarco=6 then
-                                  StFlu:=0
-                                else
-                                  StFlu:=12;
+                                StFlu:=12;
                                 PosFlu:=PosCiclo;
                               end;
                             end;
@@ -2501,7 +2514,7 @@ begin
   sAmount:= format('%5.5d',[round(rPesos*GtwDivPresetPesos)]);
   sDataBlock:= #$FF+#$E5+#$F2+#$F4+#$F8+BcdToStr(sAmount)+ #$FB;
   sDataBlock:= sDataBlock + LrcCheckChar(sDataBlock) + #$F0;
-  TransmiteComandoEsp(sDataBlock);
+  Result := TransmiteComando($20, xNPos, sDataBlock);
 end;
 
 procedure TSQLGReader.ClientSocket1Connect(Sender: TObject;
