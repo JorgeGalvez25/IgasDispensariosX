@@ -145,12 +145,14 @@ type
     function PonNivelPrecio(xNPos, xNPrec: integer): boolean;
     procedure MandaFlujoPos(xpos,xvalor:integer);
     function EnviaPresetFlu(xpos: integer; xsube: boolean): boolean;
+    function EnviaPresetFluAct(xpos, xmang: integer; rpesos: real): boolean;
     procedure EstatusDispensarios;
     procedure ProcesaComandos;
     procedure AvanzaPosCiclo;
     procedure DespliegaMemo4(lin: string);
     procedure FluStd(folio:Integer; msj: string);
     procedure FluMin(folio:Integer);
+    procedure FluAct(folio:Integer; msj: string);
     procedure ActualizaCampoJSON(xpos:Integer; campo:string; valor:Variant);
     procedure AddPeticionJSON(const aFolio: Integer; const aResultado : string);
     procedure ApplyTotalLitrosToJSON(const xpos: Integer; const TotalLitros: array of Real);
@@ -194,6 +196,9 @@ type
     EsDiesel:Boolean;
     SinComunicacion: Boolean;
     HoraDesconexion: TDateTime;
+    FluAct: Boolean;
+    FluActMang: Integer;         // manguera de FLUACT en proceso (0 = ninguna)
+    HoraPresetFluAct: TDateTime; // marca de tiempo del preset/autorizacion de esa manguera
   end;
 
   RegCmnd = record
@@ -220,7 +225,7 @@ const
 
 type
   TMetodos = (NOTHING_e, INITIALIZE_e, PARAMETERS_e, LOGIN_e, LOGOUT_e, PRICES_e, AUTHORIZE_e, STOP_e, START_e, SELFSERVICE_e, FULLSERVICE_e, BLOCK_e, UNBLOCK_e,
-              PAYMENT_e, HALT_e, RUN_e, SHUTDOWN_e, TERMINATE_e, STATE_e, TRACE_e, SAVELOGREQ_e, RESPCMND_e, LOG_e, LOGREQ_e, EJECCMND_e, FLUSTD_e, FLUMIN_e, TOTALS_e);
+              PAYMENT_e, HALT_e, RUN_e, SHUTDOWN_e, TERMINATE_e, STATE_e, TRACE_e, SAVELOGREQ_e, RESPCMND_e, LOG_e, LOGREQ_e, EJECCMND_e, FLUSTD_e, FLUMIN_e, FLUACT_e, TOTALS_e);
 
 var
   SQLGReader: TSQLGReader;
@@ -1104,6 +1109,9 @@ begin
           xc:=0;
         DigitosGilbarco := 6;
         StFluPos:=0;
+        FluAct:=false;
+        FluActMang:=0;
+        HoraPresetFluAct:=0;
         for j := 1 to 3 do
           TAdicf[i, j] := 0;
         DivImporte := GtwDivImporte;
@@ -1427,6 +1435,11 @@ begin
           ss2:=HexSepToStr(ss);
           TransmiteComandoEsp(ss2);
           SwEspMinimoCerrar:=False;
+        end
+        else if ss='FLUACT' then begin
+          rsp:='OK';
+          for xpos:=1 to MaxPosCarga do
+            TPosCarga[xpos].FluAct:=True;
         end
         else if ss='ESTADI' then begin
           if StFlu=0 then begin
@@ -1839,7 +1852,14 @@ var
 begin
   result := true;
   try
-    if xsube then
+    if TipoClb[1] = '5' then
+    begin
+      if xsube then
+        ximporte := StrToIntDef(ValorOn, 0) / 100
+      else
+        ximporte := StrToIntDef(ValorOff, 0) / 100;
+    end
+    else if xsube then
     begin
       xTagFlu := IfThen(TPosCarga[xpos].EsDiesel, tagx[2], tagx[1]);
       ximporte := StrToIntDef(IfThen(TPosCarga[xpos].EsDiesel, ValorXD, ValorX) + inttostr(xTagFlu), 0) / 100;
@@ -1880,12 +1900,46 @@ begin
   end;
 end;
 
+function TSQLGReader.EnviaPresetFluAct(xpos, xmang: integer; rpesos: real): boolean;
+begin
+  result := true;
+  try
+    AgregaLog('Preset FLUACT Posicion ' + inttoclavenum(xpos, 2) + ' Manguera ' + IntToStr(xmang) + ' $' + FormatoMoneda(rpesos));
+    if TPosCarga[xPos].DigitosGilbarco = 6 then
+    begin
+      if EnviaPresetBomba6(xpos, xmang, 1, rpesos, 0) then
+      begin
+        if Autoriza(xpos) then
+          TPosCarga[xpos].SwPreset := true
+        else
+          result := false;
+      end
+      else
+        result := false;
+    end
+    else
+    begin
+      if EnviaPresetBomba8(xpos, xmang, 1, rpesos, 0) then
+      begin
+        if Autoriza(xpos) then
+          TPosCarga[xpos].SwPreset := true
+        else
+          result := false;
+      end
+      else
+        result := false;
+    end;
+  except
+    result := false;
+  end;
+end;
+
 procedure TSQLGReader.Timer1Timer(Sender: TObject);
 label
   L01;
 var
   xvolumen, n1, n2, n3: real;
-  xcomb, xpos, xp, xgrade, i, xsuma, estatusRecibido: integer;
+  xcomb, xpos, xp, xgrade, i, xsuma, estatusRecibido, xflumang: integer;
   xtotallitros: array[1..4] of real;
 begin
   try
@@ -2020,6 +2074,31 @@ begin
                               end;
                             end;
                          end;
+                        end;
+                        if (Estatus=1) and (FluAct) and (swflu) then begin
+                          if FluActMang = 0 then begin
+                            xflumang := 1;
+                            while (xflumang <= 3) and (FluActMang = 0) do begin
+                              if TAdicf[PosCiclo,xflumang] > 0 then
+                                FluActMang := xflumang;
+                              inc(xflumang);
+                            end;
+                            if FluActMang = 0 then
+                              FluAct := False  // no quedan mangueras pendientes
+                            else begin
+                              if EnviaPresetFluAct(PosCiclo, FluActMang, TAdicf[PosCiclo,FluActMang] / 100) then
+                                HoraPresetFluAct := Now
+                              else
+                                FluActMang := 0; // se reintenta en el siguiente ciclo
+                            end;
+                          end
+                          else if MilliSecondsBetween(Now, HoraPresetFluAct) >= 500 then begin
+                            if DetenerDespacho(PosCiclo) then begin
+                              AgregaLog('Se detuvo despacho fluact Pos: '+IntToStr(PosCiclo)+' Manguera: '+IntToStr(FluActMang));
+                              TAdicf[PosCiclo,FluActMang] := 0;
+                              FluActMang := 0;
+                            end;
+                          end;
                         end;
                       end;
                     except
@@ -2473,7 +2552,7 @@ begin
       else
         msj:=ConfAdic;
 
-      if TipoClb[1] = '2' then
+      if TipoClb[1] in ['2', '5'] then
       begin
         for i := 1 to NoElemStrSep(msj, ';') do
         begin
@@ -2493,6 +2572,34 @@ begin
     except
       on e: Exception do
         AddPeticionJSON(folio, 'False|Error FLUSTD: ' + e.Message + '|');
+    end;
+  end
+  else
+    AddPeticionJSON(folio, 'False|Licencia CVL7 invalida|');
+end;
+
+procedure TSQLGReader.FluAct(folio: Integer; msj: string);
+var
+  i, xpos: Integer;
+  mangueras: string;
+begin
+  if Licencia3Ok then
+  begin
+    try
+      AgregaLog('TipoClb: ' + TipoClb + ', Mensaje FLUACT: ' + msj);
+      for i := 1 to NoElemStrSep(msj, ';') do
+      begin
+        xpos := StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj, i, ';'), 1, ':'));
+        mangueras := ExtraeElemStrSep(ExtraeElemStrSep(msj, i, ';'), 2, ':');
+        TAdicf[xpos, 1] := StrToIntDef(ExtraeElemStrSep(mangueras, 1, ','), 0);
+        TAdicf[xpos, 2] := StrToIntDef(ExtraeElemStrSep(mangueras, 2, ','), 0);
+        TAdicf[xpos, 3] := StrToIntDef(ExtraeElemStrSep(mangueras, 3, ','), 0);
+        AgregaLog('Flu1: ' + IntToStr(TAdicf[xpos, 1]) + ', Flu2: ' + IntToStr(TAdicf[xpos, 2]) + ', Flu3: ' + IntToStr(TAdicf[xpos, 3]));
+      end;
+      AddPeticionJSON(folio, 'True|' + IntToStr(EjecutaComando('FLUACT')) + '|');
+    except
+      on e: Exception do
+        AddPeticionJSON(folio, 'False|Error FLUACT: ' + e.Message + '|');
     end;
   end
   else
@@ -3358,6 +3465,9 @@ begin
 
         FLUMIN_e:
           Flumin(folio);
+
+        FLUACT_e:
+          FluAct(folio, parametro);
       end;
       socketResponse:=Socket;
     end;
