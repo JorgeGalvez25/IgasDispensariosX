@@ -199,6 +199,9 @@ type
     FluAct: Boolean;
     FluActMang: Integer;         // manguera de FLUACT en proceso (0 = ninguna)
     HoraPresetFluAct: TDateTime; // marca de tiempo del preset/autorizacion de esa manguera
+    swflujovehiculo: Boolean;    // hay un flujo por vehiculo pendiente de cerrar
+    flujovehiculo: Integer;      // digito de vehiculo (0-9) extraido del OCC/OCL
+    PrevStFlu: Integer;          // flujo interrumpido a restaurar al terminar: 0=nada, 1=FLUSTD, 2=FLUMIN
   end;
 
   RegCmnd = record
@@ -241,6 +244,7 @@ var
   EstatusAct, EstatusAnt: string;
   StFlu,PosFlu,StCiclo,CombPendiente:integer;
   SwEspMinimoCerrar:Boolean;
+  FlujoPorVehiculo:Boolean;
   Licencia3Ok: Boolean;
   Servicio: TService;
 
@@ -341,6 +345,7 @@ begin
     TipoClb := config.ReadString('CONF', 'TipoClb', '1');
     ConfAdic := config.ReadString('CONF', 'ConfAdic', '');
     DieselAdic := UpperCase(config.ReadString('CONF', 'DieselAdic', ''))='SI';
+    FlujoPorVehiculo := UpperCase(config.ReadString('CONF', 'FlujoPorVehiculo', ''))='SI';
     ListaCmnd := TStringList.Create;
     detenido := True;
     estado := -1;
@@ -1112,6 +1117,9 @@ begin
         FluAct:=false;
         FluActMang:=0;
         HoraPresetFluAct:=0;
+        swflujovehiculo:=false;
+        flujovehiculo:=0;
+        PrevStFlu:=0;
         for j := 1 to 3 do
           TAdicf[i, j] := 0;
         DivImporte := GtwDivImporte;
@@ -1369,6 +1377,8 @@ var
   xcmnd, xpos, xcomb, i, xc, xp, xfolio: integer;
   ximporte, xlitros: real;
   precioComb: Double;
+  SnImporteStr, decImporteStr, flujoStr: string;
+  ximporteVehiculo: real;
 begin
   try
     CmndNuevo:=False;
@@ -1462,7 +1472,25 @@ begin
             if (TPosCarga[xpos].estatus in [1, 5]) then
             begin
               try
-                ximporte := StrToFLoat(ExtraeElemStrSep(TabCmnd[xcmnd].comando, 3, ' '));
+                SnImporteStr := ExtraeElemStrSep(TabCmnd[xcmnd].comando, 3, ' ');
+                // Flujo por Vehiculo (igual que PAM): si el importe trae 5 decimales
+                // en vez de 2 y esta habilitado por configuracion, el 3er decimal es
+                // el digito de vehiculo (0-9); el valor especial '1.23' en los ultimos
+                // 3 decimales equivale a "sin vehiculo" (digito 0). Los 3 digitos
+                // extra se recortan para recuperar el importe real de la venta.
+                decImporteStr := ExtraeElemStrSep(SnImporteStr, 2, '.');
+                if (Length(decImporteStr) = 5) and (FlujoPorVehiculo) then
+                begin
+                  TPosCarga[xpos].swflujovehiculo := true;
+                  flujoStr := decImporteStr[3] + '.' + copy(decImporteStr, 4, 2);
+                  if flujoStr = '1.23' then
+                    TPosCarga[xpos].flujovehiculo := 0
+                  else
+                    TPosCarga[xpos].flujovehiculo := StrToInt(decImporteStr[3]);
+                  ximporte := StrToFloat(copy(SnImporteStr, 1, Length(SnImporteStr) - 3));
+                end
+                else
+                  ximporte := StrToFLoat(SnImporteStr);
                 xlitros := 0;
                 if TPosCarga[xpos].DigitosGilbarco = 8 then
                   rsp := ValidaCifra(ximporte, 6, 2)
@@ -1486,6 +1514,28 @@ begin
                     xcomb := StrToIntDef(ss, 0);
                     xp := PosicionDeCombustible(xpos, xcomb);
                     TPosCarga[xpos].Esperafinventa := StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].comando, 6, ' '), 0);
+                    // Flujo por Vehiculo: manda primero el preset especial (igual que
+                    // PAM), guardando y cerrando cualquier FLUSTD/FLUMIN que estuviera
+                    // interrumpiendose en esta posicion, para restaurarlo al terminar
+                    // la venta (ver Timer1Timer).
+                    if TPosCarga[xpos].swflujovehiculo then
+                    begin
+                      if (PosFlu = xpos) and (StFlu in [1, 2, 11, 12]) then
+                      begin
+                        if StFlu in [1, 2] then
+                          TPosCarga[xpos].PrevStFlu := 1
+                        else
+                          TPosCarga[xpos].PrevStFlu := 2;
+                        if StFlu in [2, 12] then
+                          DetenerDespacho(xpos);
+                        StFlu := 0;
+                        PosFlu := 0;
+                      end
+                      else
+                        TPosCarga[xpos].PrevStFlu := 0;
+                      ximporteVehiculo := StrToIntDef('80' + IntToStr(xpos) + IntToStr(xp) + IntToStr(TPosCarga[xpos].flujovehiculo), 0) / 100;
+                      EnviaPresetFluAct(xpos, xp, ximporteVehiculo);
+                    end;
                     // Preset Pesos
                     if TPosCarga[xpos].DigitosGilbarco = 6 then
                     begin
@@ -1565,7 +1615,22 @@ begin
             if (TPosCarga[xpos].estatus in [1, 5]) then
             begin
               try
-                xlitros := StrToFLoat(ExtraeElemStrSep(TabCmnd[xcmnd].comando, 3, ' '));
+                SnImporteStr := ExtraeElemStrSep(TabCmnd[xcmnd].comando, 3, ' ');
+                // Flujo por Vehiculo (igual que en OCC): 5 decimales en vez de 2
+                // indican que el 3er decimal trae el digito de vehiculo.
+                decImporteStr := ExtraeElemStrSep(SnImporteStr, 2, '.');
+                if (Length(decImporteStr) = 5) and (FlujoPorVehiculo) then
+                begin
+                  TPosCarga[xpos].swflujovehiculo := true;
+                  flujoStr := decImporteStr[3] + '.' + copy(decImporteStr, 4, 2);
+                  if flujoStr = '1.23' then
+                    TPosCarga[xpos].flujovehiculo := 0
+                  else
+                    TPosCarga[xpos].flujovehiculo := StrToInt(decImporteStr[3]);
+                  xlitros := StrToFloat(copy(SnImporteStr, 1, Length(SnImporteStr) - 3));
+                end
+                else
+                  xlitros := StrToFLoat(SnImporteStr);
                 ximporte := 0;
                 rsp := ValidaCifra(xlitros, 3, 2);
                 if rsp = 'OK' then
@@ -1586,6 +1651,25 @@ begin
                     xcomb := StrToIntDef(ss, 0);
                     xp := PosicionDeCombustible(xpos, xcomb);
                     TPosCarga[xpos].Esperafinventa := StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].comando, 6, ' '), 0);
+                    // Flujo por Vehiculo: igual que en OCC.
+                    if TPosCarga[xpos].swflujovehiculo then
+                    begin
+                      if (PosFlu = xpos) and (StFlu in [1, 2, 11, 12]) then
+                      begin
+                        if StFlu in [1, 2] then
+                          TPosCarga[xpos].PrevStFlu := 1
+                        else
+                          TPosCarga[xpos].PrevStFlu := 2;
+                        if StFlu in [2, 12] then
+                          DetenerDespacho(xpos);
+                        StFlu := 0;
+                        PosFlu := 0;
+                      end
+                      else
+                        TPosCarga[xpos].PrevStFlu := 0;
+                      ximporteVehiculo := StrToIntDef('80' + IntToStr(xpos) + IntToStr(xp) + IntToStr(TPosCarga[xpos].flujovehiculo), 0) / 100;
+                      EnviaPresetFluAct(xpos, xp, ximporteVehiculo);
+                    end;
                     // Preset Litros
                     if TPosCarga[xpos].DigitosGilbarco = 6 then
                     begin
@@ -1902,9 +1986,11 @@ end;
 
 function TSQLGReader.EnviaPresetFluAct(xpos, xmang: integer; rpesos: real): boolean;
 begin
+  // Envia preset + autoriza para una manguera con un monto dado por el
+  // llamador. La reutilizan tanto FLUACT como el Flujo por Vehiculo (OCC/OCL).
   result := true;
   try
-    AgregaLog('Preset FLUACT Posicion ' + inttoclavenum(xpos, 2) + ' Manguera ' + IntToStr(xmang) + ' $' + FormatoMoneda(rpesos));
+    AgregaLog('Preset especial Posicion ' + inttoclavenum(xpos, 2) + ' Manguera ' + IntToStr(xmang) + ' $' + FormatoMoneda(rpesos));
     if TPosCarga[xPos].DigitosGilbarco = 6 then
     begin
       if EnviaPresetBomba6(xpos, xmang, 1, rpesos, 0) then
@@ -2099,6 +2185,22 @@ begin
                               FluActMang := 0;
                             end;
                           end;
+                        end;
+                        // Flujo por Vehiculo: al volver la posicion a Idle (transicion
+                        // de estatus, igual que PAM) se restaura el flujo (FLUSTD o
+                        // FLUMIN) que haya quedado interrumpido por la venta con
+                        // vehiculo, reactivando el mismo mecanismo de StFlu/PosFlu.
+                        if (EstatusAnt<>Estatus) and (Estatus=1) and (swflujovehiculo) then begin
+                          if PrevStFlu=1 then begin
+                            StFlu:=1;
+                            PosFlu:=PosCiclo;
+                          end
+                          else if PrevStFlu=2 then begin
+                            StFlu:=11;
+                            PosFlu:=PosCiclo;
+                          end;
+                          PrevStFlu:=0;
+                          swflujovehiculo:=false;
                         end;
                       end;
                     except
