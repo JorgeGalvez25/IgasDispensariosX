@@ -198,6 +198,7 @@ type
     SinComunicacion: Boolean;
     HoraDesconexion: TDateTime;
     FluAct: Boolean;
+    FluActPendiente: array[1..3] of Boolean; // incluye porcentaje cero explicito
     FluActMang: Integer;         // manguera de FLUACT en proceso (0 = ninguna)
     HoraPresetFluAct: TDateTime; // marca de tiempo del preset/autorizacion de esa manguera
     swflujovehiculo: Boolean;    // hay un flujo por vehiculo pendiente de cerrar
@@ -1121,8 +1122,10 @@ begin
         swflujovehiculo:=false;
         flujovehiculo:=0;
         PrevStFlu:=0;
-        for j := 1 to 3 do
+        for j := 1 to 3 do begin
           TAdicf[i, j] := 0;
+          FluActPendiente[j] := False;
+        end;
         DivImporte := GtwDivImporte;
         DivLitros := GtwDivLitros;
         estatus := 0;
@@ -2178,26 +2181,33 @@ begin
                             end;
                          end;
                         end;
-                        if (Estatus=1) and (FluAct) and (swflu) then begin
-                          if FluActMang = 0 then begin
+                        if (FluAct) and (swflu) then begin
+                          // Solo una manguera nueva requiere posicion disponible.
+                          if (FluActMang = 0) and (Estatus=1) then begin
                             xflumang := 1;
                             while (xflumang <= 3) and (FluActMang = 0) do begin
-                              if TAdicf[PosCiclo,xflumang] > 0 then
+                              if FluActPendiente[xflumang] then
                                 FluActMang := xflumang;
                               inc(xflumang);
                             end;
                             if FluActMang = 0 then
                               FluAct := False  // no quedan mangueras pendientes
                             else begin
-                              if EnviaPresetFluAct(PosCiclo, FluActMang, TAdicf[PosCiclo,FluActMang] / 100) then
+                              // 8xx.yz: xx=posicion, y=manguera, z=porcentaje.
+                              if EnviaPresetFluAct(PosCiclo, FluActMang,
+                                  (80000 + PosCiclo * 100 + FluActMang * 10 +
+                                   TAdicf[PosCiclo,FluActMang]) / 100) then
                                 HoraPresetFluAct := Now
                               else
                                 FluActMang := 0; // se reintenta en el siguiente ciclo
                             end;
                           end
-                          else if MilliSecondsBetween(Now, HoraPresetFluAct) >= 500 then begin
+                          // El preset autoriza la posicion; detener aun con Estatus=9.
+                          else if (FluActMang <> 0) and
+                                  (MilliSecondsBetween(Now, HoraPresetFluAct) >= 500) then begin
                             if DetenerDespacho(PosCiclo) then begin
                               AgregaLog('Se detuvo despacho fluact Pos: '+IntToStr(PosCiclo)+' Manguera: '+IntToStr(FluActMang));
+                              FluActPendiente[FluActMang] := False;
                               TAdicf[PosCiclo,FluActMang] := 0;
                               FluActMang := 0;
                             end;
@@ -2664,14 +2674,20 @@ begin
         AgregaLog('TipoClb: ' + TipoClb + ', Mensaje: ' + msj);
 
         config := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
-        config.WriteString('CONF', 'ConfAdic', msj);
-        config := nil;
+        try
+          config.WriteString('CONF', 'ConfAdic', msj);
+        finally
+          config.Free;
+        end;
         ConfAdic:=msj;
       end
-      else
+      else begin
         msj:=ConfAdic;
+        AgregaLog('FLUSTD inicio: TipoClb=' + TipoClb + ', ConfAdic=[' + msj + ']');
+      end;
 
-      if TipoClb[1] in ['2', '5'] then
+      // Tipo 5 usa ValorOn/ValorOff fijos; no interpreta ConfAdic.
+      if TipoClb[1] = '2' then
       begin
         for i := 1 to NoElemStrSep(msj, ';') do
         begin
@@ -2683,42 +2699,74 @@ begin
           AgregaLog('Flu1: ' + IntToStr(TAdicf[xpos, 1]) + ', Flu2: ' + IntToStr(TAdicf[xpos, 2]) + ', Flu3: ' + IntToStr(TAdicf[xpos, 3]));
         end;
       end
-      else
+      else if TipoClb[1] <> '5' then
         for i := 1 to NoElemStrSep(msj, ';') do
           tagx[i] := StrToInt(ExtraeElemStrSep(msj, i, ';'));
 
       AddPeticionJSON(folio, 'True|' + IntToStr(EjecutaComando('FLUSTD')) + '|')
     except
-      on e: Exception do
+      on e: Exception do begin
+        AgregaLog('Error FLUSTD folio=' + IntToStr(folio) + ': ' + e.Message);
         AddPeticionJSON(folio, 'False|Error FLUSTD: ' + e.Message + '|');
+      end;
     end;
   end
-  else
+  else begin
+    AgregaLog('Error FLUSTD folio=' + IntToStr(folio) + ': Licencia CVL7 invalida');
     AddPeticionJSON(folio, 'False|Licencia CVL7 invalida|');
+  end;
 end;
 
 procedure TSQLGReader.FluAct(folio: Integer; msj: string);
 var
-  i, xpos: Integer;
-  mangueras: string;
+  i, j, xpos, porcentaje: Integer;
+  elemento, mangueras, valor: string;
 begin
   if Licencia3Ok then
   begin
     try
       AgregaLog('TipoClb: ' + TipoClb + ', Mensaje FLUACT: ' + msj);
+      if Trim(msj) = '' then
+        raise Exception.Create('Favor de indicar posiciones y porcentajes');
+      // Validar todo el mensaje antes de modificar los pendientes.
       for i := 1 to NoElemStrSep(msj, ';') do
       begin
-        xpos := StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj, i, ';'), 1, ':'));
-        mangueras := ExtraeElemStrSep(ExtraeElemStrSep(msj, i, ';'), 2, ':');
-        TAdicf[xpos, 1] := StrToIntDef(ExtraeElemStrSep(mangueras, 1, ','), 0);
-        TAdicf[xpos, 2] := StrToIntDef(ExtraeElemStrSep(mangueras, 2, ','), 0);
-        TAdicf[xpos, 3] := StrToIntDef(ExtraeElemStrSep(mangueras, 3, ','), 0);
+        elemento := Trim(ExtraeElemStrSep(msj, i, ';'));
+        if elemento = '' then Continue;
+        xpos := StrToInt(ExtraeElemStrSep(elemento, 1, ':'));
+        if (xpos < 1) or (xpos > MaxPosCarga) or (xpos > MaximoDePosiciones) then
+          raise Exception.Create('Posicion FLUACT no disponible: ' + IntToStr(xpos));
+        mangueras := ExtraeElemStrSep(elemento, 2, ':');
+        if (Trim(mangueras) = '') or (NoElemStrSep(mangueras, ',') > 3) then
+          raise Exception.Create('FLUACT requiere de 1 a 3 mangueras');
+        for j := 1 to 3 do begin
+          valor := Trim(ExtraeElemStrSep(mangueras, j, ','));
+          if valor <> '' then begin
+            porcentaje := StrToIntDef(valor, -1);
+            if (Length(valor) <> 1) or (porcentaje < 0) or (porcentaje > 9) then
+              raise Exception.Create('Porcentaje FLUACT debe ser un digito de 0 a 9');
+          end;
+        end;
+      end;
+      for i := 1 to NoElemStrSep(msj, ';') do
+      begin
+        elemento := Trim(ExtraeElemStrSep(msj, i, ';'));
+        if elemento = '' then Continue;
+        xpos := StrToInt(ExtraeElemStrSep(elemento, 1, ':'));
+        mangueras := ExtraeElemStrSep(elemento, 2, ':');
+        for j := 1 to 3 do begin
+          valor := Trim(ExtraeElemStrSep(mangueras, j, ','));
+          TAdicf[xpos, j] := StrToIntDef(valor, 0);
+          TPosCarga[xpos].FluActPendiente[j] := valor <> '';
+        end;
         AgregaLog('Flu1: ' + IntToStr(TAdicf[xpos, 1]) + ', Flu2: ' + IntToStr(TAdicf[xpos, 2]) + ', Flu3: ' + IntToStr(TAdicf[xpos, 3]));
       end;
       AddPeticionJSON(folio, 'True|' + IntToStr(EjecutaComando('FLUACT')) + '|');
     except
-      on e: Exception do
+      on e: Exception do begin
+        AgregaLog('Error FLUACT: ' + e.Message);
         AddPeticionJSON(folio, 'False|Error FLUACT: ' + e.Message + '|');
+      end;
     end;
   end
   else
