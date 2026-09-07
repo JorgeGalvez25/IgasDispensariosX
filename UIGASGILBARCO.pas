@@ -163,6 +163,7 @@ type
 type
   tiposcarga = record
     SwDesHabil: boolean;
+    SwRevisaAutorizadoRun: boolean; // Primera lectura valida despues de Run
     DigitosGilbarco, DivImporte, DivLitros, estatus, estatusant: integer;
     importe, volumen, precio: real;
     Isla, PosActual, xCiclo: integer; // Posicion del combustible en proceso: 1..NoComb
@@ -1126,6 +1127,7 @@ begin
         DivLitros := GtwDivLitros;
         estatus := 0;
         estatusant := 0;
+        SwRevisaAutorizadoRun := false;
         HoraOcc:=0;
         NoComb := 0;
         SwPreset := false;
@@ -2090,6 +2092,21 @@ begin
                           estatus:=estatusant
                         else
                           estatus:=estatusRecibido;
+                        // Revisar una sola vez por posicion al iniciar con Run.
+                        // Sin respuesta (0), esperar la primera lectura valida.
+                        if SwRevisaAutorizadoRun and (estatusRecibido <> 0) then
+                        begin
+                          if estatusRecibido = 9 then
+                          begin
+                            if EjecutaComando('DVC '+IntToStr(PosCiclo)) > 0 then
+                            begin
+                              SwRevisaAutorizadoRun := false;
+                              AgregaLog('Run: DVC encolado para posicion autorizada '+IntToStr(PosCiclo));
+                            end;
+                          end
+                          else
+                            SwRevisaAutorizadoRun := false;
+                        end;
                         if estatus>1 then
                           SwPreset:=False;
                         EstatusDispensarios;
@@ -3206,6 +3223,8 @@ begin
 end;
 
 procedure TSQLGReader.Iniciar(folio: Integer);
+var
+  xpos: Integer;
 begin
   try
     if (not pSerial.Open) then begin
@@ -3220,6 +3239,12 @@ begin
     wTriggerEOT:= pSerial.AddDataTrigger(#$F0,true);
     wTriggerLF:= pSerial.AddDataTrigger(#$8A,true);
 
+    // Un Run repetido durante la operacion no reactiva la revision.
+    if detenido then
+      for xpos := 1 to MaxPosCarga do
+        TPosCarga[xpos].SwRevisaAutorizadoRun :=
+          (TPosCarga[xpos].NoComb > 0) and (not TPosCarga[xpos].SwDesHabil);
+
     detenido:=False;
     estado:=1;
     numPaso:=0;
@@ -3230,8 +3255,9 @@ begin
     Timer1.Enabled:=True;
     Timer2.Enabled:=False;
     SetEstadoJSON(estado);
-    AddPeticionJSON(folio, 'True|');
-    FluStd(0,'');
+    if ConfAdic<>'' then
+      FluStd(0, ConfAdic);
+    AddPeticionJSON(folio, 'True|');      
   except
     on e:Exception do begin
       AgregaLog('Excepcion Iniciar: '+e.Message+'|');
