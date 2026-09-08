@@ -14,6 +14,19 @@ const
   ValorOn = '93715';
   ValorOff = '92476';
 
+  pvLibre = 0;
+  pvEsperaEspecial = 1;
+  pvEsperaDisponible = 2;
+  pvAutorizaVenta = 3;
+  pvEsperaVenta = 4;
+  pvError = 5;
+  pvVenta = 6;
+  pvRestaura = 7;
+  pvEsperaRestauracion = 8;
+  pvFinRestauracion = 9;
+  pvEnProceso = [pvEsperaEspecial, pvEsperaDisponible, pvAutorizaVenta,
+    pvEsperaVenta, pvRestaura, pvEsperaRestauracion, pvFinRestauracion];
+
 type
   TSQLGReader = class(TService)
     pSerial: TApdComPort;
@@ -146,6 +159,9 @@ type
     procedure MandaFlujoPos(xpos,xvalor:integer);
     function EnviaPresetFlu(xpos: integer; xsube: boolean): boolean;
     function EnviaPresetFluAct(xpos, xmang: integer; rpesos: real): boolean;
+    procedure ProcesaPresetVehiculo(xpos, estatusRecibido: integer);
+    function IniciaPresetVehiculo(xpos, xmang: integer; pesos, litros: real): string;
+    procedure CargaFlujoAct;
     procedure EstatusDispensarios;
     procedure ProcesaComandos;
     procedure AvanzaPosCiclo;
@@ -199,11 +215,17 @@ type
     HoraDesconexion: TDateTime;
     FluAct: Boolean;
     FluActPendiente: array[1..3] of Boolean; // incluye porcentaje cero explicito
+    FluActConfigurado: array[1..3] of Boolean; // distingue cero explicito de ausencia de FLUACT
     FluActMang: Integer;         // manguera de FLUACT en proceso (0 = ninguna)
     HoraPresetFluAct: TDateTime; // marca de tiempo del preset/autorizacion de esa manguera
     swflujovehiculo: Boolean;    // hay un flujo por vehiculo pendiente de cerrar
     flujovehiculo: Integer;      // digito de vehiculo (0-9) extraido del OCC/OCL
-    PrevStFlu: Integer;          // flujo interrumpido a restaurar al terminar: 0=nada, 1=FLUSTD, 2=FLUMIN
+    // Secuencia por posicion; constantes pv* describen cada etapa.
+    PasoPresetVehiculo: Integer;
+    MangPresetVehiculo: Integer;
+    PesosPresetVehiculo, LitrosPresetVehiculo: real;
+    HoraPresetVehiculo: TDateTime;
+    ValorFlujoOriginal: real;
   end;
 
   RegCmnd = record
@@ -1121,10 +1143,16 @@ begin
         HoraPresetFluAct:=0;
         swflujovehiculo:=false;
         flujovehiculo:=0;
-        PrevStFlu:=0;
+        PasoPresetVehiculo:=pvLibre;
+        MangPresetVehiculo:=0;
+        PesosPresetVehiculo:=0;
+        LitrosPresetVehiculo:=0;
+        HoraPresetVehiculo:=0;
+        ValorFlujoOriginal:=0;
         for j := 1 to 3 do begin
           TAdicf[i, j] := 0;
           FluActPendiente[j] := False;
+          FluActConfigurado[j] := False;
         end;
         DivImporte := GtwDivImporte;
         DivLitros := GtwDivLitros;
@@ -1158,6 +1186,7 @@ begin
         HoraNivelPrecio := Now;
       end;
 
+    CargaFlujoAct; // recuperar los porcentajes despues de inicializar las posiciones
     posArr := TlkJSONlist.Create;
 
     for i := 0 to posiciones.Count - 1 do
@@ -1383,7 +1412,7 @@ var
   ximporte, xlitros: real;
   precioComb: Double;
   SnImporteStr, decImporteStr, flujoStr: string;
-  ximporteVehiculo: real;
+
 begin
   try
     CmndNuevo:=False;
@@ -1474,9 +1503,13 @@ begin
           rsp := 'OK';
           if (xpos in [1..MaxPosCarga]) then
           begin
-            if (TPosCarga[xpos].estatus in [1, 5]) then
+            if (TPosCarga[xpos].estatus in [1, 5]) and
+               (TPosCarga[xpos].PasoPresetVehiculo = pvLibre) and
+               (TPosCarga[xpos].FluActMang = 0) then
             begin
               try
+                TPosCarga[xpos].swflujovehiculo := false;
+                TPosCarga[xpos].flujovehiculo := 0;
                 SnImporteStr := ExtraeElemStrSep(TabCmnd[xcmnd].comando, 3, ' ');
                 // Flujo por Vehiculo (igual que PAM): si el importe trae 5 decimales
                 // en vez de 2 y esta habilitado por configuracion, el 3er decimal es
@@ -1519,28 +1552,9 @@ begin
                     xcomb := StrToIntDef(ss, 0);
                     xp := PosicionDeCombustible(xpos, xcomb);
                     TPosCarga[xpos].Esperafinventa := StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].comando, 6, ' '), 0);
-                    // Flujo por Vehiculo: manda primero el preset especial (igual que
-                    // PAM), guardando y cerrando cualquier FLUSTD/FLUMIN que estuviera
-                    // interrumpiendose en esta posicion, para restaurarlo al terminar
-                    // la venta (ver Timer1Timer).
                     if TPosCarga[xpos].swflujovehiculo then
-                    begin
-                      if (PosFlu = xpos) and (StFlu in [1, 2, 11, 12]) then
-                      begin
-                        if StFlu in [1, 2] then
-                          TPosCarga[xpos].PrevStFlu := 1
-                        else
-                          TPosCarga[xpos].PrevStFlu := 2;
-                        if StFlu in [2, 12] then
-                          DetenerDespacho(xpos);
-                        StFlu := 0;
-                        PosFlu := 0;
-                      end
-                      else
-                        TPosCarga[xpos].PrevStFlu := 0;
-                      ximporteVehiculo := StrToIntDef('80' + IntToStr(xpos) + IntToStr(xp) + IntToStr(TPosCarga[xpos].flujovehiculo), 0) / 100;
-                      EnviaPresetFluAct(xpos, xp, ximporteVehiculo);
-                    end;
+                      rsp := IniciaPresetVehiculo(xpos, xp, ximporte, 0)
+                    else
                     // Preset Pesos
                     if TPosCarga[xpos].DigitosGilbarco = 6 then
                     begin
@@ -1617,9 +1631,13 @@ begin
           rsp := 'OK';
           if (xpos in [1..MaxPosCarga]) then
           begin
-            if (TPosCarga[xpos].estatus in [1, 5]) then
+            if (TPosCarga[xpos].estatus in [1, 5]) and
+               (TPosCarga[xpos].PasoPresetVehiculo = pvLibre) and
+               (TPosCarga[xpos].FluActMang = 0) then
             begin
               try
+                TPosCarga[xpos].swflujovehiculo := false;
+                TPosCarga[xpos].flujovehiculo := 0;
                 SnImporteStr := ExtraeElemStrSep(TabCmnd[xcmnd].comando, 3, ' ');
                 // Flujo por Vehiculo (igual que en OCC): 5 decimales en vez de 2
                 // indican que el 3er decimal trae el digito de vehiculo.
@@ -1656,25 +1674,9 @@ begin
                     xcomb := StrToIntDef(ss, 0);
                     xp := PosicionDeCombustible(xpos, xcomb);
                     TPosCarga[xpos].Esperafinventa := StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].comando, 6, ' '), 0);
-                    // Flujo por Vehiculo: igual que en OCC.
                     if TPosCarga[xpos].swflujovehiculo then
-                    begin
-                      if (PosFlu = xpos) and (StFlu in [1, 2, 11, 12]) then
-                      begin
-                        if StFlu in [1, 2] then
-                          TPosCarga[xpos].PrevStFlu := 1
-                        else
-                          TPosCarga[xpos].PrevStFlu := 2;
-                        if StFlu in [2, 12] then
-                          DetenerDespacho(xpos);
-                        StFlu := 0;
-                        PosFlu := 0;
-                      end
-                      else
-                        TPosCarga[xpos].PrevStFlu := 0;
-                      ximporteVehiculo := StrToIntDef('80' + IntToStr(xpos) + IntToStr(xp) + IntToStr(TPosCarga[xpos].flujovehiculo), 0) / 100;
-                      EnviaPresetFluAct(xpos, xp, ximporteVehiculo);
-                    end;
+                      rsp := IniciaPresetVehiculo(xpos, xp, 0, xlitros)
+                    else
                     // Preset Litros
                     if TPosCarga[xpos].DigitosGilbarco = 6 then
                     begin
@@ -1758,7 +1760,15 @@ begin
           xpos := strtointdef(ExtraeElemStrSep(TabCmnd[xcmnd].comando, 2, ' '), 0);
           if xpos in [1..MaxPosCarga] then
           begin
-            if (TPosCarga[xpos].estatus in [2, 9]) then
+            // Una cancelacion explicita impide cualquier autorizacion diferida.
+            if TPosCarga[xpos].PasoPresetVehiculo in (pvEnProceso + [pvError]) then
+            begin
+              TPosCarga[xpos].PasoPresetVehiculo := pvLibre;
+              TPosCarga[xpos].swflujovehiculo := false;
+              DetenerDespacho(xpos);
+              AgregaLog('Flujo vehiculo cancelado Pos: '+IntToStr(xpos));
+            end
+            else if (TPosCarga[xpos].estatus in [2, 9]) then
             begin
               if DetenerDespacho(xpos) then
               begin
@@ -2025,6 +2035,160 @@ begin
   end;
 end;
 
+procedure TSQLGReader.CargaFlujoAct;
+var
+  config: TIniFile;
+  xpos, xmang, porcentaje: integer;
+begin
+  config := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
+  try
+    for xpos := 1 to 32 do
+      for xmang := 1 to 3 do
+      begin
+        porcentaje := config.ReadInteger('FLUACT', IntToStr(xpos)+'.'+IntToStr(xmang), -1);
+        TPosCarga[xpos].FluActConfigurado[xmang] := porcentaje in [0..9];
+        if TPosCarga[xpos].FluActConfigurado[xmang] then
+          TAdicf[xpos,xmang] := porcentaje;
+      end;
+  finally
+    config.Free;
+  end;
+end;
+
+function TSQLGReader.IniciaPresetVehiculo(xpos, xmang: integer; pesos, litros: real): string;
+var
+  porcentaje: integer;
+begin
+  Result := 'OK';
+  with TPosCarga[xpos] do
+  begin
+    // Sin una base conocida no cambiar el flujo ni inventar un porcentaje de retorno.
+    if not (xmang in [1..3]) then
+      Result := 'Manguera no valida para flujo por vehiculo'
+    else if (TipoClb[1] = '5') and (not FluActConfigurado[xmang]) then
+      Result := 'Falta porcentaje FLUACT guardado para esta manguera';
+    if Result <> 'OK' then
+    begin
+      swflujovehiculo := false;
+      Exit;
+    end;
+
+    MangPresetVehiculo := xmang;
+    PesosPresetVehiculo := pesos;
+    LitrosPresetVehiculo := litros;
+    case TipoClb[1] of
+      '5': ValorFlujoOriginal := (80000 + xpos * 100 + xmang * 10 + TAdicf[xpos,xmang]) / 100;
+      '2': ValorFlujoOriginal := TAdicf[xpos,1];
+    else
+      porcentaje := IfThen(EsDiesel, tagx[2], tagx[1]);
+      ValorFlujoOriginal := StrToIntDef(
+        IfThen(EsDiesel, ValorXD, ValorX) + IntToStr(porcentaje), 0) / 100;
+    end;
+    AgregaLog('Flujo original guardado Pos: '+IntToStr(xpos)+
+      ' Manguera: '+IntToStr(xmang)+' Preset: '+FormatoMoneda(ValorFlujoOriginal));
+
+    if (PosFlu = xpos) and (StFlu in [1,2,11,12]) then
+    begin
+      if StFlu in [2,12] then DetenerDespacho(xpos);
+      StFlu := 0;
+      PosFlu := 0;
+    end;
+    HoraPresetVehiculo := Now;
+    PasoPresetVehiculo := pvEsperaEspecial;
+    if not EnviaPresetFluAct(xpos, xmang, (80000 + xpos * 100 + xmang * 10 + flujovehiculo) / 100) then
+    begin
+      PasoPresetVehiculo := pvError;
+      Result := 'No se pudo prefijar/autorizar flujo por vehiculo';
+    end;
+  end;
+end;
+
+procedure TSQLGReader.ProcesaPresetVehiculo(xpos, estatusRecibido: integer);
+var
+  enviado: boolean;
+begin
+  with TPosCarga[xpos] do
+  begin
+    if (PasoPresetVehiculo = pvEsperaVenta) and (estatusRecibido in [2, 3, 9]) then
+      PasoPresetVehiculo := pvVenta;
+    if not (PasoPresetVehiculo in pvEnProceso) then
+      Exit;
+    if SecondsBetween(Now, HoraPresetVehiculo) >= 30 then
+    begin
+      PasoPresetVehiculo := pvError;
+      DetenerDespacho(xpos);
+      AgregaLog('Error flujo vehiculo Pos: '+IntToStr(xpos)+
+        ': tiempo agotado en secuencia de venta/restauracion, requiere DVC');
+      Exit;
+    end;
+    if estatusRecibido = 0 then
+      Exit;
+    case PasoPresetVehiculo of
+      pvEsperaEspecial: if estatusRecibido = 9 then
+         begin
+           if DetenerDespacho(xpos) then
+           begin
+             PasoPresetVehiculo := pvEsperaDisponible;
+             AgregaLog('Se detuvo despacho flujo vehiculo Pos: '+IntToStr(xpos));
+           end;
+         end;
+      pvEsperaDisponible: if estatusRecibido in [1, 5] then
+         begin
+           AgregaLog('Preset real flujo vehiculo Pos: '+IntToStr(xpos)+
+             ' Pesos: '+FormatoMoneda(PesosPresetVehiculo)+
+             ' Litros: '+FormatoMoneda(LitrosPresetVehiculo));
+           if (PesosPresetVehiculo = 0) and (LitrosPresetVehiculo = 0) then
+             enviado := true // OCC libre: solo autorizar, igual que el camino normal
+           else if DigitosGilbarco = 6 then
+             enviado := EnviaPresetBomba6(xpos, MangPresetVehiculo, 1,
+               PesosPresetVehiculo, LitrosPresetVehiculo)
+           else
+             enviado := EnviaPresetBomba8(xpos, MangPresetVehiculo, 1,
+               PesosPresetVehiculo, LitrosPresetVehiculo);
+           if enviado then
+             PasoPresetVehiculo := pvAutorizaVenta;
+         end;
+      pvAutorizaVenta: if estatusRecibido in [1, 5] then
+         begin
+           if Autoriza(xpos) then
+           begin
+             PasoPresetVehiculo := pvEsperaVenta;
+             SwPreset := true;
+             AgregaLog('Se autorizo preset real flujo vehiculo Pos: '+IntToStr(xpos));
+           end;
+         end;
+      pvRestaura: if estatusRecibido = 1 then
+         begin
+           if TipoClb[1] = '2' then
+           begin
+             MandaFlujoPos(xpos, Round(ValorFlujoOriginal));
+             PasoPresetVehiculo := pvFinRestauracion;
+           end
+           else
+           begin
+             if TipoClb[1] = '5' then
+               enviado := EnviaPresetFluAct(xpos, MangPresetVehiculo, ValorFlujoOriginal)
+             else
+               enviado := EnviaPresetFluAct(xpos, 1, ValorFlujoOriginal);
+             if enviado then PasoPresetVehiculo := pvEsperaRestauracion;
+           end;
+         end;
+      pvEsperaRestauracion: if estatusRecibido = 9 then
+         begin
+           if DetenerDespacho(xpos) then
+             PasoPresetVehiculo := pvFinRestauracion;
+         end;
+      pvFinRestauracion: if estatusRecibido = 1 then
+         begin
+           AgregaLog('Flujo original restaurado Pos: '+IntToStr(xpos)+
+             ' Valor: '+FormatoMoneda(ValorFlujoOriginal));
+           swflujovehiculo := false;
+           PasoPresetVehiculo := pvLibre;
+         end;
+    end;
+  end;
+end;
+
 procedure TSQLGReader.Timer1Timer(Sender: TObject);
 label
   L01;
@@ -2067,7 +2231,7 @@ begin
             try
               case NumPaso of
                 0:
-                  if (estatus = 1) and (SwNivelPrecio) then
+                  if (estatus = 1) and (SwNivelPrecio) and (PasoPresetVehiculo = pvLibre) then
                   begin     // NIVEL DE PRECIOS
                     if (Now >= HoraNivelPrecio) then
                     begin
@@ -2081,7 +2245,7 @@ begin
                       end;
                     end;
                   end;
-                1:if (stciclo=xciclo)or(Estatus>1)or(SwPreset) then
+                1:if (stciclo=xciclo)or(Estatus>1)or(SwPreset)or(PasoPresetVehiculo in pvEnProceso) then
                   begin                           // ESTATUS
                     try
                       if (not swdeshabil) and ((not SinComunicacion) or (SecondsBetween(Now, HoraDesconexion) >= RandomRange(55, 65))) then
@@ -2137,6 +2301,9 @@ begin
                           SinComunicacion := True;
                           HoraDesconexion := Now;
                         end;
+                        // No usar el estado anterior cuando falla la consulta.
+                        ProcesaPresetVehiculo(PosCiclo, estatusRecibido);
+                        if PasoPresetVehiculo = pvLibre then begin
                         Case TipoClb[1] of
                           '2':begin
                                 if (Estatus=1)and(StFluPos=1)and(swflu) then begin   // Sube
@@ -2208,26 +2375,18 @@ begin
                             if DetenerDespacho(PosCiclo) then begin
                               AgregaLog('Se detuvo despacho fluact Pos: '+IntToStr(PosCiclo)+' Manguera: '+IntToStr(FluActMang));
                               FluActPendiente[FluActMang] := False;
-                              TAdicf[PosCiclo,FluActMang] := 0;
+                              // Conservar el porcentaje base para restaurarlo tras una venta.
                               FluActMang := 0;
                             end;
                           end;
                         end;
-                        // Flujo por Vehiculo: al volver la posicion a Idle (transicion
-                        // de estatus, igual que PAM) se restaura el flujo (FLUSTD o
-                        // FLUMIN) que haya quedado interrumpido por la venta con
-                        // vehiculo, reactivando el mismo mecanismo de StFlu/PosFlu.
-                        if (EstatusAnt<>Estatus) and (Estatus=1) and (swflujovehiculo) then begin
-                          if PrevStFlu=1 then begin
-                            StFlu:=1;
-                            PosFlu:=PosCiclo;
-                          end
-                          else if PrevStFlu=2 then begin
-                            StFlu:=11;
-                            PosFlu:=PosCiclo;
-                          end;
-                          PrevStFlu:=0;
-                          swflujovehiculo:=false;
+                        end; // excluir FLUSTD/FLUMIN/FLUACT durante flujo por vehiculo
+                        // El Idle intermedio no termina la venta: solo restaurar tras observarla.
+                        if (estatusRecibido=1) and (Estatus=1) and
+                           (swflujovehiculo) and (PasoPresetVehiculo=pvVenta) then begin
+                          PasoPresetVehiculo:=pvRestaura;
+                          HoraPresetVehiculo:=Now;
+                          AgregaLog('Restauracion de flujo pendiente Pos: '+IntToStr(PosCiclo));
                         end;
                       end;
                     except
@@ -2721,6 +2880,7 @@ procedure TSQLGReader.FluAct(folio: Integer; msj: string);
 var
   i, j, xpos, porcentaje: Integer;
   elemento, mangueras, valor: string;
+  config: TMemIniFile;
 begin
   if Licencia3Ok then
   begin
@@ -2728,25 +2888,32 @@ begin
       AgregaLog('TipoClb: ' + TipoClb + ', Mensaje FLUACT: ' + msj);
       if Trim(msj) = '' then
         raise Exception.Create('Favor de indicar posiciones y porcentajes');
-      // Validar todo el mensaje antes de modificar los pendientes.
-      for i := 1 to NoElemStrSep(msj, ';') do
-      begin
-        elemento := Trim(ExtraeElemStrSep(msj, i, ';'));
-        if elemento = '' then Continue;
-        xpos := StrToInt(ExtraeElemStrSep(elemento, 1, ':'));
-        if (xpos < 1) or (xpos > MaxPosCarga) or (xpos > MaximoDePosiciones) then
-          raise Exception.Create('Posicion FLUACT no disponible: ' + IntToStr(xpos));
-        mangueras := ExtraeElemStrSep(elemento, 2, ':');
-        if (Trim(mangueras) = '') or (NoElemStrSep(mangueras, ',') > 3) then
-          raise Exception.Create('FLUACT requiere de 1 a 3 mangueras');
-        for j := 1 to 3 do begin
-          valor := Trim(ExtraeElemStrSep(mangueras, j, ','));
-          if valor <> '' then begin
-            porcentaje := StrToIntDef(valor, -1);
-            if (Length(valor) <> 1) or (porcentaje < 0) or (porcentaje > 9) then
-              raise Exception.Create('Porcentaje FLUACT debe ser un digito de 0 a 9');
+      config := TMemIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
+      try
+        // Validar todo antes de guardar o modificar los pendientes.
+        for i := 1 to NoElemStrSep(msj, ';') do
+        begin
+          elemento := Trim(ExtraeElemStrSep(msj, i, ';'));
+          if elemento = '' then Continue;
+          xpos := StrToInt(ExtraeElemStrSep(elemento, 1, ':'));
+          if (xpos < 1) or (xpos > MaxPosCarga) or (xpos > MaximoDePosiciones) then
+            raise Exception.Create('Posicion FLUACT no disponible: ' + IntToStr(xpos));
+          mangueras := ExtraeElemStrSep(elemento, 2, ':');
+          if (Trim(mangueras) = '') or (NoElemStrSep(mangueras, ',') > 3) then
+            raise Exception.Create('FLUACT requiere de 1 a 3 mangueras');
+          for j := 1 to 3 do begin
+            valor := Trim(ExtraeElemStrSep(mangueras, j, ','));
+            if valor <> '' then begin
+              porcentaje := StrToIntDef(valor, -1);
+              if (Length(valor) <> 1) or (porcentaje < 0) or (porcentaje > 9) then
+                raise Exception.Create('Porcentaje FLUACT debe ser un digito de 0 a 9');
+              config.WriteInteger('FLUACT', IntToStr(xpos)+'.'+IntToStr(j), porcentaje);
+            end;
           end;
         end;
+        config.UpdateFile;
+        finally
+        config.Free;
       end;
       for i := 1 to NoElemStrSep(msj, ';') do
       begin
@@ -2756,8 +2923,12 @@ begin
         mangueras := ExtraeElemStrSep(elemento, 2, ':');
         for j := 1 to 3 do begin
           valor := Trim(ExtraeElemStrSep(mangueras, j, ','));
-          TAdicf[xpos, j] := StrToIntDef(valor, 0);
-          TPosCarga[xpos].FluActPendiente[j] := valor <> '';
+          // Una manguera omitida conserva su porcentaje y cualquier envio pendiente.
+          if valor <> '' then begin
+            TAdicf[xpos, j] := StrToIntDef(valor, 0);
+            TPosCarga[xpos].FluActPendiente[j] := True;
+            TPosCarga[xpos].FluActConfigurado[j] := True;
+          end;
         end;
         AgregaLog('Flu1: ' + IntToStr(TAdicf[xpos, 1]) + ', Flu2: ' + IntToStr(TAdicf[xpos, 2]) + ', Flu3: ' + IntToStr(TAdicf[xpos, 3]));
       end;
