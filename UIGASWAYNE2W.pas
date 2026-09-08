@@ -62,6 +62,7 @@ type
     rootJSON : TlkJSONbase;
     socketResponse : TCustomWinSocket;
     ConfAdic: string;
+    GSentinelKey: string;
     TAdic   :array[1..3] of String;
     function  TransmiteComando1(DataBlock:string):boolean;
     function  TransmiteComando2(DataBlock:string):boolean;
@@ -356,6 +357,7 @@ begin
     ClientSocket1.Port:=StrToInt(ExtraeElemStrSep(config.ReadString('CONF','ServidorSocket','127.0.0.1:1004'), 2, ':'));
     mapeoMangueras:=config.ReadString('CONF','MapeoMangueras','');
     ConfAdic := config.ReadString('CONF', 'ConfAdic', '');
+    GSentinelKey:=config.ReadString('CONF','Licencia','');
     ListaCmnd:=TStringList.Create;
     detenido:=True;
     estado:=-1;
@@ -2871,8 +2873,40 @@ begin
 end;
 
 procedure TSQLW2Reader.Iniciar(folio: Integer);
+var
+  haspObj: OleVariant;
+  haspPath, haspResult, haspMessage: string;
 begin
   try
+    if GSentinelKey <> '' then begin
+      try
+        haspPath:=ExtractFilePath(ParamStr(0));
+        haspObj:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
+        haspResult:=haspObj.CheckKey(haspPath, GSentinelKey);
+        haspMessage:=ExtraeElemStrSep(haspResult,2,'|');
+        haspResult:=ExtraeElemStrSep(haspResult,1,'|');
+        AgregaLog('HASP CheckKey resultado: '+haspResult);
+        if haspResult <> 'True' then begin
+          AgregaLog('HASP: llave invalida, servicio no iniciado - '+haspMessage);
+          AddPeticionJSON(folio, 'False|Llave de seguridad HASP no valida: '+haspMessage+'|');
+          GuardarLog(0);
+          Exit;
+        end;
+      except
+        on e:Exception do begin
+          AgregaLog('HASP: error al verificar llave: '+e.Message);
+          GuardarLog(0);
+          AddPeticionJSON(folio, 'False|Error al verificar llave HASP: '+e.Message+'|');
+          Exit;
+        end;
+      end;
+    end
+    else begin
+      AgregaLog('HASP: SentinelKey no configurado en .ini');
+      AddPeticionJSON(folio, 'False|SentinelKey no configurado en .ini|');
+      Exit;
+    end;
+
     if (not pSerial.Open) then begin
       if (estado=-1) then begin
         AddPeticionJSON(folio, 'False|No se han recibido los parametros de inicializacion|');

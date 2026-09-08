@@ -33,6 +33,7 @@ type
     ListaLogPetRes:TStringList;
     rutaLog:string;
     licencia:string;
+    GSentinelKey:string;
     detenido:Boolean;
     estado:Integer;
     ListaCmnd    :TStrings;
@@ -269,6 +270,7 @@ begin
     confPos:=config.ReadString('CONF','ConfPos','');
     modoPreset:=config.ReadString('CONF','ModoPreset','Si')='Si';
     licencia:=config.ReadString('CONF','Licencia','');
+    GSentinelKey:=licencia;
     minutosLog:=StrToInt(config.ReadString('CONF','MinutosLog','0'));
     ContadorAlarma:=0;
     ListaCmnd:=TStringList.Create;
@@ -2218,8 +2220,40 @@ begin
 end;
 
 function TSQLHReader.Iniciar: string;
+var
+  haspObj: OleVariant;
+  haspPath, haspResult, haspMessage: string;
 begin
   try
+    if GSentinelKey <> '' then begin
+      try
+        haspPath:=ExtractFilePath(ParamStr(0));
+        haspObj:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
+        haspResult:=haspObj.CheckKey(haspPath, GSentinelKey);
+        haspMessage:=ExtraeElemStrSep(haspResult,2,'|');
+        haspResult:=ExtraeElemStrSep(haspResult,1,'|');
+        AgregaLog('HASP CheckKey resultado: '+haspResult);
+        if haspResult <> 'True' then begin
+          AgregaLog('HASP: llave invalida, servicio no iniciado - '+haspMessage);
+          GuardarLog;
+          Result:='False|Llave de seguridad HASP no valida: '+haspMessage+'|';
+          Exit;
+        end;
+      except
+        on e:Exception do begin
+          AgregaLog('HASP: error al verificar llave: '+e.Message);
+          GuardarLog;
+          Result:='False|Error al verificar llave HASP: '+e.Message+'|';
+          Exit;
+        end;
+      end;
+    end
+    else begin
+      AgregaLog('HASP: SentinelKey no configurado en .ini');
+      Result:='False|SentinelKey no configurado en .ini|';
+      Exit;
+    end;
+
     if (not pSerial.Open) then begin
       if (estado=-1) then begin
         Result:='False|No se han recibido los parametros de inicializacion|';

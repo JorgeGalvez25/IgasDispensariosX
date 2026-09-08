@@ -71,6 +71,7 @@ type
     rutaLog: string;
     confPos: string;
     licencia: string;
+    GSentinelKey: string;
     detenido: Boolean;
     estado: Integer;
   // CONTROL TRAFICO COMANDOS
@@ -364,6 +365,7 @@ begin
     ClientSocket1.Host:=ExtraeElemStrSep(config.ReadString('CONF','ServidorSocket','127.0.0.1:1004'), 1, ':');
     ClientSocket1.Port:=StrToInt(ExtraeElemStrSep(config.ReadString('CONF','ServidorSocket','127.0.0.1:1004'), 2, ':'));
     licencia := config.ReadString('CONF', 'Licencia', '');
+    GSentinelKey := licencia;
     minutosLog := StrToInt(config.ReadString('CONF', 'MinutosLog', '0'));
     DigGilbarco:=config.ReadString('CONF','DigitosGilbarco','');
     PermiteModoNormal:=config.ReadString('CONF','PermiteModoNormal','No')='Si';
@@ -3480,8 +3482,39 @@ end;
 procedure TSQLGReader.Iniciar(folio: Integer);
 var
   xpos: Integer;
+  haspObj: OleVariant;
+  haspPath, haspResult, haspMessage: string;
 begin
   try
+    if GSentinelKey <> '' then begin
+      try
+        haspPath:=ExtractFilePath(ParamStr(0));
+        haspObj:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
+        haspResult:=haspObj.CheckKey(haspPath, GSentinelKey);
+        haspMessage:=ExtraeElemStrSep(haspResult,2,'|');
+        haspResult:=ExtraeElemStrSep(haspResult,1,'|');
+        AgregaLog('HASP CheckKey resultado: '+haspResult);
+        if haspResult <> 'True' then begin
+          AgregaLog('HASP: llave invalida, servicio no iniciado - '+haspMessage);
+          AddPeticionJSON(folio, 'False|Llave de seguridad HASP no valida: '+haspMessage+'|');
+          GuardarLog(0);
+          Exit;
+        end;
+      except
+        on e:Exception do begin
+          AgregaLog('HASP: error al verificar llave: '+e.Message);
+          GuardarLog(0);
+          AddPeticionJSON(folio, 'False|Error al verificar llave HASP: '+e.Message+'|');
+          Exit;
+        end;
+      end;
+    end
+    else begin
+      AgregaLog('HASP: SentinelKey no configurado en .ini');
+      AddPeticionJSON(folio, 'False|SentinelKey no configurado en .ini|');
+      Exit;
+    end;
+
     if (not pSerial.Open) then begin
       if (estado=-1) then begin
         AddPeticionJSON(folio, 'False|No se han recibido los parametros de inicializacion|');
