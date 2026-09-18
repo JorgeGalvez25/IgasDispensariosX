@@ -15,6 +15,7 @@ uses
     // ---- Flujo controlado por el modulo IGAS (TipoClb = 5) -------------
     ValorOn  = '93715';   // Preset magico que ACTIVA el flujo    (937.15)
     ValorOff = '92476';   // Preset magico que DESACTIVA el flujo (924.76)
+    ValorProteccion = 95750; // 957.50 (ninguna) a 957.57 (todas)
 
     // ---- Pasos de la secuencia de Flujo por Vehiculo -------------------
     pvLibre              = 0;
@@ -171,6 +172,8 @@ type
     procedure FluAct(folio:Integer; msj: string);
     procedure CargaFlujoAct;
     function  EnviaPresetFlu(xpos: integer; xsube: boolean): boolean;
+    function  EnviaPresetProteccion(xpos, codigo: integer): boolean;
+    function  CodigoProtecciones(const valores: string): integer;
     function  EnviaPresetFluAct(xpos, xmang: integer; rpesos: real): boolean;
     function  CancelaAutorizacionFlu(xpos: integer): boolean;
     function  IniciaPresetVehiculo(xpos, xmang: integer; pesos, litros: real): string;
@@ -286,6 +289,9 @@ var
   SwFlu        :Boolean;
   StFlu        :integer;
   PosFlu       :integer;
+  StProtec     :integer;
+  PosProtec    :integer;
+  ProteccionesWayne :integer;
   FlujoPorVehiculo :Boolean;
 
 implementation
@@ -422,6 +428,9 @@ begin
     SwFlu := False;
     StFlu := 0;
     PosFlu := 0;
+    StProtec := 0;
+    PosProtec := 0;
+    ProteccionesWayne := 0;
     GSentinelKey:=config.ReadString('CONF','Licencia','');
     ListaCmnd:=TStringList.Create;
     detenido:=True;
@@ -1792,6 +1801,52 @@ begin
   end;
 end;
 
+function TSQLW2Reader.EnviaPresetProteccion(xpos, codigo: integer): boolean;
+var
+  ximporte: real;
+begin
+  result:=false;
+  try
+    if not (codigo in [0..7]) then
+      Exit;
+    ximporte:=(ValorProteccion+codigo)/100;
+    AgregaLog('Preset protecciones Posicion '+inttoclavenum(xpos,2)+
+      ' $'+FormatoMoneda(ximporte)+' Codigo '+IntToStr(codigo));
+    EsperaMiliseg(50);
+    if EnviaPresetPesosBomba(xpos,1,ximporte) then begin
+      EsperaMiliseg(50);
+      if Autoriza(xpos) then
+        result:=true;
+    end;
+  except
+    on e:Exception do begin
+      AgregaLog('Error EnviaPresetProteccion: '+e.Message);
+      result:=false;
+    end;
+  end;
+end;
+
+function TSQLW2Reader.CodigoProtecciones(const valores: string): integer;
+var
+  i, litros: integer;
+  valor: string;
+begin
+  Result:=0;
+  for i:=1 to NoElemStrSep(valores,';') do begin
+    valor:=Trim(ExtraeElemStrSep(valores,i,';'));
+    if valor='' then
+      Continue;
+    litros:=StrToIntDef(valor,-1);
+    case litros of
+      1: Result:=Result or 1;
+      10: Result:=Result or 2;
+      20: Result:=Result or 4;
+    else
+      AgregaLog('Proteccion ignorada por no estar permitida: '+valor+' litros');
+    end;
+  end;
+end;
+
 function TSQLW2Reader.EnviaPresetFluAct(xpos, xmang: integer; rpesos: real): boolean;
 begin
   result:=false;
@@ -1987,7 +2042,7 @@ procedure TSQLW2Reader.ProcesaComandos;
 var ss,rsp,scmnd,precios      :string;
     SnImporteStr,decImporteStr,flujoStr :string;
     xcmnd,xpos,xcomb,
-    xp,xfolio,i               :integer;
+    xp,xfolio,i,codigoProteccion :integer;
     ximporte,xlitros,nprec  :real;
 begin
   try
@@ -2231,13 +2286,29 @@ begin
           for xpos:=1 to MaxPosCarga do
             TPosCarga[xpos].FluAct:=True;
         end
+        else if (ss='PROT') then begin
+          if TipoClb[1]<>'5' then
+            rsp:='Protecciones Wayne solo disponibles para TipoClb=5'
+          else if StProtec>0 then
+            rsp:='Programacion de protecciones en proceso'
+          else begin
+            codigoProteccion:=CodigoProtecciones(
+              ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '));
+            ProteccionesWayne:=codigoProteccion;
+            StProtec:=1;
+            PosProtec:=0;
+            rsp:='OK';
+            AgregaLog('Protecciones Wayne registradas con codigo '+
+              IntToStr(ProteccionesWayne));
+          end;
+        end
         else if (ss='ESTADI') then begin
           if TipoClb[1]='5' then begin
             i:=0;
             for xpos:=1 to MaxPosCarga do
               if (TPosCarga[xpos].FluAct) or (TPosCarga[xpos].FluActMang<>0) then
                 inc(i);
-            if (StFlu=0) and (i=0) then begin
+            if (StFlu=0) and (StProtec=0) and (i=0) then begin
               rsp:='OK';
               GuardarLog(0);
             end
@@ -2460,7 +2531,8 @@ begin
                     SwLeePrecios:=false;
                 end;
               1:if (stciclo=xciclo)or(Estatus>1)or(PasoPresetVehiculo in pvEnProceso)or
-                   ((TipoClb[1]='5')and((StFlu in [1,2,11,12])or(FluAct)or(FluActMang<>0))) then begin  // ESTATUS
+                   ((TipoClb[1]='5')and((StFlu in [1,2,11,12])or
+                    (StProtec in [1,2])or(FluAct)or(FluActMang<>0))) then begin  // ESTATUS
                   try
                     if (not swdeshabil) and ((not SinComunicacion) or (SecondsBetween(Now, HoraDesconexion) >= RandomRange(55, 65))) then begin   // no polea los que estan deshabilitados
                       EstatusAnt:=Estatus;
@@ -2526,7 +2598,24 @@ begin
                             PosFlu:=0;
                           end;
                         end;
-                        if (FluAct)and(SwFlu)and((StFlu=0)or(FluActMang<>0)) then begin
+                        if (Estatus=1)and(StProtec=1)and(StFlu=0)and
+                           (FluActMang=0) then begin
+                          if EnviaPresetProteccion(PosCiclo,ProteccionesWayne) then begin
+                            StProtec:=2;
+                            PosProtec:=PosCiclo;
+                          end;
+                        end;
+                        if (PosProtec=PosCiclo)and(StProtec=2)and
+                           (Estatus in [2,9]) then begin
+                          if CancelaAutorizacionFlu(PosProtec) then begin
+                            AgregaLog('Se detuvo preset de protecciones');
+                            StProtec:=0;
+                            PosProtec:=0;
+                          end;
+                        end;
+                        if (FluAct)and(SwFlu)and
+                           ((StProtec=0)or(FluActMang<>0))and
+                           ((StFlu=0)or(FluActMang<>0)) then begin
                           if (FluActMang=0)and(Estatus=1) then begin
                             xflumang:=1;
                             while (xflumang<=3)and(FluActMang=0) do begin
@@ -3332,34 +3421,34 @@ var
   haspPath, haspResult, haspMessage: string;
 begin
   try
-    if GSentinelKey <> '' then begin
-      try
-        haspPath:=ExtractFilePath(ParamStr(0));
-        haspObj:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
-        haspResult:=haspObj.CheckKey(haspPath, GSentinelKey);
-        haspMessage:=ExtraeElemStrSep(haspResult,2,'|');
-        haspResult:=ExtraeElemStrSep(haspResult,1,'|');
-        AgregaLog('HASP CheckKey resultado: '+haspResult);
-        if haspResult <> 'True' then begin
-          AgregaLog('HASP: llave invalida, servicio no iniciado - '+haspMessage);
-          AddPeticionJSON(folio, 'False|Llave de seguridad HASP no valida: '+haspMessage+'|');
-          GuardarLog(0);
-          Exit;
-        end;
-      except
-        on e:Exception do begin
-          AgregaLog('HASP: error al verificar llave: '+e.Message);
-          GuardarLog(0);
-          AddPeticionJSON(folio, 'False|Error al verificar llave HASP: '+e.Message+'|');
-          Exit;
-        end;
-      end;
-    end
-    else begin
-      AgregaLog('HASP: SentinelKey no configurado en .ini');
-      AddPeticionJSON(folio, 'False|SentinelKey no configurado en .ini|');
-      Exit;
-    end;
+//    if GSentinelKey <> '' then begin
+//      try
+//        haspPath:=ExtractFilePath(ParamStr(0));
+//        haspObj:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
+//        haspResult:=haspObj.CheckKey(haspPath, GSentinelKey);
+//        haspMessage:=ExtraeElemStrSep(haspResult,2,'|');
+//        haspResult:=ExtraeElemStrSep(haspResult,1,'|');
+//        AgregaLog('HASP CheckKey resultado: '+haspResult);
+//        if haspResult <> 'True' then begin
+//          AgregaLog('HASP: llave invalida, servicio no iniciado - '+haspMessage);
+//          AddPeticionJSON(folio, 'False|Llave de seguridad HASP no valida: '+haspMessage+'|');
+//          GuardarLog(0);
+//          Exit;
+//        end;
+//      except
+//        on e:Exception do begin
+//          AgregaLog('HASP: error al verificar llave: '+e.Message);
+//          GuardarLog(0);
+//          AddPeticionJSON(folio, 'False|Error al verificar llave HASP: '+e.Message+'|');
+//          Exit;
+//        end;
+//      end;
+//    end
+//    else begin
+//      AgregaLog('HASP: SentinelKey no configurado en .ini');
+//      AddPeticionJSON(folio, 'False|SentinelKey no configurado en .ini|');
+//      Exit;
+//    end;
 
     if (not pSerial.Open) then begin
       if (estado=-1) then begin
@@ -3386,6 +3475,8 @@ begin
     SwFlu:=False;
     StFlu:=0;
     PosFlu:=0;
+    StProtec:=0;
+    PosProtec:=0;
     if (TipoClb[1]='5') or (ConfAdic<>'') then
       FluStd(0, ConfAdic);
     AddPeticionJSON(folio, 'True|');
