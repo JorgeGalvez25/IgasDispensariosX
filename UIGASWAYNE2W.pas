@@ -171,7 +171,7 @@ type
     procedure FluStd(folio:Integer; msj: string);
     procedure FluMin(folio:Integer);
     procedure FluAct(folio:Integer; msj: string);
-    procedure CargaFlujoAct;
+    procedure CargaFlujoAct(const texto: string);
     function  EnviaPresetFlu(xpos: integer; xsube: boolean): boolean;
     function  EnviaPresetProteccion(xpos, codigo: integer): boolean;
     function  CodigoProtecciones(const valores: string): integer;
@@ -674,18 +674,6 @@ begin
           SwRecibida:=true;
           ModoOpera:='Prepago';
 
-          posObj := TlkJSONObject.Create;
-          posObj.Add('DispenserId', xpos);
-          posObj.Add('HoraOcc', FormatDateTime('yyyy-mm-dd',HoraOcc)+'T'+FormatDateTime('hh:nn',HoraOcc));
-          posObj.Add('Manguera', 0);
-          posObj.Add('Combustible', 0);
-          posObj.Add('Estatus', 0);
-          posObj.Add('Importe', 0);
-          posObj.Add('Volumen', 0);
-          posObj.Add('Precio', 0);
-
-          hosesArr := TlkJSONlist.Create;
-
           mangueras:=posiciones.Child[i].Field['Hoses'];
           for j:=0 to mangueras.Count-1 do begin
             existe:=false;
@@ -701,28 +689,21 @@ begin
                 TPosx[NoComb]:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(mapeoMangueras,xpos,';'),TMang[NoComb],','))
               else
                 TPosx[NoComb]:=mangueras.Child[j].Field['HoseId'].Value;
-
-              hoseObj := TlkJSONObject.Create;
-              hoseObj.Add('HoseId',TMang[NoComb]);
-              hoseObj.Add('ProductId', xcomb);
-              hoseObj.Add('Total', 0);
-              hosesArr.Add(hoseObj);
             end;
           end;
-          posObj.Add('Hoses', hosesArr);
         end;
-        posArr.Add(posObj);
       end;
     end;
 
-    // El protocolo de estatus es posicional.  Conservamos los huecos hasta la
-    // posicion maxima recibida, pero sin mangueras ni comunicacion con ellos.
+    // PosCarga contiene solamente posiciones recibidas y queda ordenado por
+    // DispenserId. Los huecos se conservan como ceros en EstatusDispensarios,
+    // porque ese protocolo si es posicional, pero no se publican como bombas.
     for xpos:=1 to MaxPosCarga do
-      if not TPosCarga[xpos].SwRecibida then begin
+      if TPosCarga[xpos].SwRecibida then with TPosCarga[xpos] do begin
         posObj := TlkJSONObject.Create;
         posObj.Add('DispenserId', xpos);
-        posObj.Add('HoraOcc', FormatDateTime('yyyy-mm-dd',TPosCarga[xpos].HoraOcc)+
-          'T'+FormatDateTime('hh:nn',TPosCarga[xpos].HoraOcc));
+        posObj.Add('HoraOcc', FormatDateTime('yyyy-mm-dd',HoraOcc)+
+          'T'+FormatDateTime('hh:nn',HoraOcc));
         posObj.Add('Manguera', 0);
         posObj.Add('Combustible', 0);
         posObj.Add('Estatus', 0);
@@ -730,11 +711,18 @@ begin
         posObj.Add('Volumen', 0);
         posObj.Add('Precio', 0);
         hosesArr := TlkJSONlist.Create;
+        for j:=1 to NoComb do begin
+          hoseObj := TlkJSONObject.Create;
+          hoseObj.Add('HoseId',TMang[j]);
+          hoseObj.Add('ProductId',TComb[j]);
+          hoseObj.Add('Total',0);
+          hosesArr.Add(hoseObj);
+        end;
         posObj.Add('Hoses', hosesArr);
         posArr.Add(posObj);
       end;
     TlkJSONobject(rootJSON).Add('PosCarga',   posArr);
-    CargaFlujoAct;
+    CargaFlujoAct(ConfAdic);
   except
     on e:Exception do
       Result:='False|Excepcion: '+e.Message+'|';
@@ -1921,47 +1909,98 @@ begin
   end;
 end;
 
-procedure TSQLW2Reader.CargaFlujoAct;
+procedure TSQLW2Reader.CargaFlujoAct(const texto: string);
 var
-  config: TIniFile;
-  xpos, xmang, i, cantidad: integer;
+  xpos, xmang, i, j, cantidad, cantidadMang, separador: integer;
   valores: array[1..3] of Integer;
-  texto, valor: string;
+  nuevos: array[1..MaximoDePosiciones,1..3] of Integer;
+  posicionesDefinidas: array[1..MaximoDePosiciones] of Boolean;
+  elemento, mangueras, valor, conf: string;
 begin
   if TipoClb[1] <> '5' then Exit;
-  config:=TIniFile.Create(ExtractFilePath(ParamStr(0))+'PDISPENSARIOS.ini');
-  try
-    texto:=Trim(config.ReadString('CONF','ConfAdic',''));
-  finally
-    config.Free;
+
+  conf:=Trim(texto);
+  if conf='' then
+    raise Exception.Create('ConfAdic no puede estar vacio para TipoClb=5');
+
+  for xpos:=1 to MaximoDePosiciones do begin
+    posicionesDefinidas[xpos]:=False;
+    for xmang:=1 to 3 do
+      nuevos[xpos,xmang]:=-1;
   end;
-  cantidad:=NoElemStrSep(texto,';');
-  if (texto='') or (cantidad<1) or (cantidad>3) then
-    raise Exception.Create('ConfAdic requiere de 1 a 3 porcentajes separados por punto y coma');
-  for i:=1 to 3 do valores[i]:=-1;
-  for i:=1 to cantidad do begin
-    valor:=Trim(ExtraeElemStrSep(texto,i,';'));
-    valores[i]:=StrToIntDef(valor,-1);
-    if (Length(valor)<>1) or not (valores[i] in [0..9]) then
-      raise Exception.Create('ConfAdic: porcentaje no valido para manguera '+IntToStr(i));
-  end;
-  for xpos:=1 to MaxPosCarga do
-    for i:=1 to TPosCarga[xpos].NoComb do begin
-      xmang:=TPosCarga[xpos].TMang[i];
-      if not (xmang in [1..3]) then
-        raise Exception.Create('Manguera no valida para FLUACT Pos: '+IntToStr(xpos));
-      if valores[xmang]<0 then
-        raise Exception.Create('Falta porcentaje en ConfAdic Pos: '+IntToStr(xpos)+
-          ' Manguera: '+IntToStr(xmang));
+
+  // Se conserva el formato historico global: 5;5 o 5;5;5.
+  if Pos(':',conf)=0 then begin
+    cantidad:=NoElemStrSep(conf,';');
+    if (cantidad<1) or (cantidad>3) then
+      raise Exception.Create('ConfAdic requiere de 1 a 3 porcentajes globales');
+    for i:=1 to 3 do
+      valores[i]:=-1;
+    for i:=1 to cantidad do begin
+      valor:=Trim(ExtraeElemStrSep(conf,i,';'));
+      valores[i]:=StrToIntDef(valor,-1);
+      if (Length(valor)<>1) or not (valores[i] in [0..9]) then
+        raise Exception.Create('ConfAdic: porcentaje no valido para manguera '+IntToStr(i));
     end;
+    for xpos:=1 to MaximoDePosiciones do
+      for xmang:=1 to 3 do
+        nuevos[xpos,xmang]:=valores[xmang];
+  end
+  else begin
+    // Formato por posicion: 1:5,5;2:5,5;9:2.
+    cantidad:=NoElemStrSep(conf,';');
+    for i:=1 to cantidad do begin
+      elemento:=Trim(ExtraeElemStrSep(conf,i,';'));
+      if elemento='' then
+        Continue;
+      separador:=Pos(':',elemento);
+      if (separador<=1) or (separador=Length(elemento)) then
+        raise Exception.Create('ConfAdic: elemento invalido ['+elemento+']');
+      xpos:=StrToIntDef(Trim(Copy(elemento,1,separador-1)),-1);
+      if not (xpos in [1..MaximoDePosiciones]) then
+        raise Exception.Create('ConfAdic: posicion no valida '+IntToStr(xpos));
+      if posicionesDefinidas[xpos] then
+        raise Exception.Create('ConfAdic: posicion repetida '+IntToStr(xpos));
+      posicionesDefinidas[xpos]:=True;
+      mangueras:=Trim(Copy(elemento,separador+1,Length(elemento)-separador));
+      cantidadMang:=NoElemStrSep(mangueras,',');
+      if (cantidadMang<1) or (cantidadMang>3) then
+        raise Exception.Create('ConfAdic: posicion '+IntToStr(xpos)+
+          ' requiere de 1 a 3 porcentajes');
+      for j:=1 to cantidadMang do begin
+        valor:=Trim(ExtraeElemStrSep(mangueras,j,','));
+        nuevos[xpos,j]:=StrToIntDef(valor,-1);
+        if (Length(valor)<>1) or not (nuevos[xpos,j] in [0..9]) then
+          raise Exception.Create('ConfAdic: porcentaje no valido Pos: '+
+            IntToStr(xpos)+' Manguera: '+IntToStr(j));
+      end;
+    end;
+  end;
+
+  // Se valida todo antes de modificar la configuracion que esta en uso.
   for xpos:=1 to MaxPosCarga do
+    if TPosCarga[xpos].SwRecibida then
+      for i:=1 to TPosCarga[xpos].NoComb do begin
+        xmang:=TPosCarga[xpos].TMang[i];
+        if not (xmang in [1..3]) then
+          raise Exception.Create('Manguera no valida para FLUACT Pos: '+IntToStr(xpos));
+        if nuevos[xpos,xmang]<0 then
+          raise Exception.Create('Falta porcentaje en ConfAdic Pos: '+IntToStr(xpos)+
+            ' Manguera: '+IntToStr(xmang));
+      end;
+
+  for xpos:=1 to MaximoDePosiciones do
     with TPosCarga[xpos] do begin
+      for xmang:=1 to 3 do begin
+        TAdicf[xpos,xmang]:=0;
+        FluActConfigurado[xmang]:=False;
+      end;
       for i:=1 to NoComb do begin
         xmang:=TMang[i];
-        TAdicf[xpos,xmang]:=valores[xmang];
+        TAdicf[xpos,xmang]:=nuevos[xpos,xmang];
         FluActConfigurado[xmang]:=True;
         AgregaLog('Base FLUACT cargada en memoria desde ConfAdic Pos: '+IntToStr(xpos)+
-          ' Manguera: '+IntToStr(xmang)+' Porcentaje: '+IntToStr(valores[xmang]));
+          ' Manguera: '+IntToStr(xmang)+' Porcentaje: '+IntToStr(nuevos[xpos,xmang]));
       end;
     end;
 end;
@@ -3919,24 +3958,18 @@ end;
 
 procedure TSQLW2Reader.FluStd(folio:Integer; msj: string);
 var
-  i: Integer;
+  i, porcentaje: Integer;
+  valor: string;
+  nuevosAdic: array[1..3] of string;
   config: TIniFile;
 begin
   if Licencia3Ok then
   begin
     try
-      if folio>0 then begin
+      if folio>0 then
         AgregaLog('TipoClb: ' + TipoClb + ', Mensaje: ' + msj);
 
-        config := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
-        try
-          config.WriteString('CONF', 'ConfAdic', msj);
-        finally
-          config.Free;
-        end;
-        ConfAdic:=msj;
-      end
-      else begin
+      if folio=0 then begin
         msj:=ConfAdic;
         AgregaLog('FLUSTD inicio: TipoClb=' + TipoClb + ', ConfAdic=[' + msj + ']');
       end;
@@ -3944,9 +3977,36 @@ begin
       if (folio=0) and (TipoClb[1]<>'5') and (NoElemStrSep(msj, ';')=0) then
         Exit;
 
-      if TipoClb[1] <> '5' then
-        for i := 1 to NoElemStrSep(msj, ';') do
-          TAdic[i] := ExtraeElemStrSep(msj, i, ';');
+      if TipoClb[1]='5' then
+        CargaFlujoAct(msj)
+      else begin
+        if Pos(':',msj)>0 then
+          raise Exception.Create('ConfAdic por posicion requiere TipoClb=5; '+
+            'verifique que la clave del INI no sea -TipoClb');
+        if NoElemStrSep(msj,';')>High(TAdic) then
+          raise Exception.Create('FLUSTD admite como maximo '+
+            IntToStr(High(TAdic))+' porcentajes para este TipoClb');
+        for i:=1 to NoElemStrSep(msj,';') do begin
+          valor:=Trim(ExtraeElemStrSep(msj,i,';'));
+          porcentaje:=StrToIntDef(valor,-1);
+          if (Length(valor)<>1) or not (porcentaje in [0..9]) then
+            raise Exception.Create('Porcentaje FLUSTD no valido en posicion '+IntToStr(i));
+          nuevosAdic[i]:=valor;
+        end;
+        for i:=1 to NoElemStrSep(msj,';') do
+          TAdic[i]:=nuevosAdic[i];
+      end;
+
+      // La configuracion se persiste solamente despues de validarla completa.
+      if folio>0 then begin
+        config:=TIniFile.Create(ExtractFilePath(ParamStr(0))+'PDISPENSARIOS.ini');
+        try
+          config.WriteString('CONF','ConfAdic',msj);
+        finally
+          config.Free;
+        end;
+        ConfAdic:=msj;
+      end;
 
       AddPeticionJSON(folio, 'True|' + IntToStr(EjecutaComando('FLUSTD')) + '|')
     except
