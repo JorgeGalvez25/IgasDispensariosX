@@ -127,6 +127,7 @@ type
     function ObtenerEstado: string;
     function ResultadoComando(xFolio:integer):string;
     function  LeePrecios(xPosCarga : integer): boolean;
+    function  PosicionRecibida(xPosCarga: integer): boolean;
     function  DameEstatus(xPosCarga:integer) : integer;
     function  ReanudaDespacho(xPosCarga: integer) : boolean;
     function  DetenerDespacho(xPosCarga : integer) : boolean;
@@ -183,7 +184,8 @@ type
 
 type
      tiposcarga = record
-       SwDesHabil   :boolean;
+       SwDesHabil,
+       SwRecibida   :boolean; // Fue incluida en INITIALIZE y se puede sondear
        DivImporte,
        DivLitros,
        estatus,
@@ -653,6 +655,8 @@ begin
         TPrecio[j]:=0;
       end;
       SwDeshabil:=false;
+      SwRecibida:=false;
+      ModoOpera:='Prepago';
       SwLeeVenta:=true;
       SwStatusFV:=false;
       SwCambiaPrecio:=false;
@@ -667,6 +671,7 @@ begin
         MaxPosCarga:=xpos;
       if (xpos in [1..32]) then begin
         with TPosCarga[xpos] do begin
+          SwRecibida:=true;
           ModoOpera:='Prepago';
 
           posObj := TlkJSONObject.Create;
@@ -709,6 +714,25 @@ begin
         posArr.Add(posObj);
       end;
     end;
+
+    // El protocolo de estatus es posicional.  Conservamos los huecos hasta la
+    // posicion maxima recibida, pero sin mangueras ni comunicacion con ellos.
+    for xpos:=1 to MaxPosCarga do
+      if not TPosCarga[xpos].SwRecibida then begin
+        posObj := TlkJSONObject.Create;
+        posObj.Add('DispenserId', xpos);
+        posObj.Add('HoraOcc', FormatDateTime('yyyy-mm-dd',TPosCarga[xpos].HoraOcc)+
+          'T'+FormatDateTime('hh:nn',TPosCarga[xpos].HoraOcc));
+        posObj.Add('Manguera', 0);
+        posObj.Add('Combustible', 0);
+        posObj.Add('Estatus', 0);
+        posObj.Add('Importe', 0);
+        posObj.Add('Volumen', 0);
+        posObj.Add('Precio', 0);
+        hosesArr := TlkJSONlist.Create;
+        posObj.Add('Hoses', hosesArr);
+        posArr.Add(posObj);
+      end;
     TlkJSONobject(rootJSON).Add('PosCarga',   posArr);
     CargaFlujoAct;
   except
@@ -1066,8 +1090,10 @@ var DataBlock,
     xprecio:real;
 begin
   try
-    PonPuertoPos(xPosCarga);
     result:=false;
+    if not PosicionRecibida(xPosCarga) then
+      Exit;
+    PonPuertoPos(xPosCarga);
     for xp:=1 to TPosCarga[xPosCarga].nocomb do begin
       xposfis:=TPosCarga[xPosCarga].TPosx[xp];
       stComando:= char(ControlByte(xPosCarga,7))+#0+char(xposfis-1)+#0+#0;         //   0F 00 00 F2 03
@@ -1175,6 +1201,16 @@ begin
   end;
 end;
 
+function TSQLW2Reader.PosicionRecibida(xPosCarga: integer): boolean;
+begin
+  Result:=false;
+  if not (xPosCarga in [1..MaximoDePosiciones]) then
+    Exit;
+  if xPosCarga>MaxPosCarga then
+    Exit;
+  Result:=TPosCarga[xPosCarga].SwRecibida;
+end;
+
 function TSQLW2Reader.DameEstatus(
   xPosCarga: integer): integer;
 var iStatus,i,xposact : integer;
@@ -1183,8 +1219,10 @@ var iStatus,i,xposact : integer;
     tbit:array[0..7] of boolean;
 begin
   try
-    PonPuertoPos(xPosCarga);
     iStatus:= 0;
+    if not PosicionRecibida(xPosCarga) then
+      Exit;
+    PonPuertoPos(xPosCarga);
     chComando:= char(ControlByte(xPosCarga,1));     // Comando 1
     DataBlock:=EmpacaWayne(chComando);
     if SegmActual=1 then begin
@@ -1330,8 +1368,10 @@ var DataBlock,
     stComando :string;
 begin
   try
-    PonPuertoPos(xPosCarga);
     result:=false;
+    if not PosicionRecibida(xPosCarga) then
+      Exit;
+    PonPuertoPos(xPosCarga);
     stComando:= char(ControlByte(xPosCarga,0))+char(9*16+7)+#0+#0+#0;
     DataBlock:=EmpacaWayne(stComando);
     if ( ( TransmiteComando1(DataBlock) ) and ( length(sRespuesta)=13 ) ) then
@@ -1352,7 +1392,9 @@ begin
     lin:='';xestado:='';xmodo:='';
     for xpos:=1 to MaxPosCarga do with TPosCarga[xpos] do begin
       xmodo:=xmodo+ModoOpera[1];
-      if not SwDesHabil then begin
+      if not SwRecibida then
+        xestado:=xestado+'0' // Hueco de INITIALIZE: existe, pero no se consulta
+      else if not SwDesHabil then begin
         case estatus of
           0:xestado:=xestado+'0'; // Sin Comunicaci�n
           1:xestado:=xestado+'1'; // Inactivo (Idle)
@@ -1402,8 +1444,10 @@ var DataBlock,
     stComando :string;
 begin
   try
-    PonPuertoPos(xPosCarga);
     result:=false;
+    if not PosicionRecibida(xPosCarga) then
+      Exit;
+    PonPuertoPos(xPosCarga);
     stComando:= char(ControlByte(xPosCarga,0))+char(10*16+7)+#0+#0+#0;
     DataBlock:=EmpacaWayne(stComando);
     if SegmActual=1 then begin
@@ -1431,8 +1475,10 @@ var DataBlock,ss,ss1,
     rLitrosAnt, rPrecioAnt, rPesosAnt: real;
 begin
   try
-    PonPuertoPos(xPosCarga);
     result:=false;
+    if not PosicionRecibida(xPosCarga) then
+      Exit;
+    PonPuertoPos(xPosCarga);
     rLitrosAnt:=rLitros;rPrecioAnt:=rPrecio;rPesosAnt:=rPesos;
     xposact:=TPosCarga[xposcarga].PosActual;
     if xposact in [1..4] then
@@ -1588,8 +1634,10 @@ var DataBlock,ss,
     xposfis:integer;
 begin
   try
-    PonPuertoPos(xPosCarga);
     result:=false;
+    if not PosicionRecibida(xPosCarga) then
+      Exit;
+    PonPuertoPos(xPosCarga);
     rTotalLitros:=0;
     if xpos in [1..4] then begin
       xposfis:=TPosCarga[xposcarga].TPosx[xpos];
@@ -1675,8 +1723,10 @@ var DataBlock,
     stComando :string;
 begin
   try
-    PonPuertoPos(xPosCarga);
     result:=false;
+    if not PosicionRecibida(xPosCarga) then
+      Exit;
+    PonPuertoPos(xPosCarga);
     stComando:= char(ControlByte(xPosCarga,0))+char(8*16+15)+char(0)+#0+#0;         // 08 8F 00 00 00
     DataBlock:=EmpacaWayne(stComando);
     if ( ( TransmiteComando1(DataBlock) ) and ( length(sRespuesta)=13 ) ) then
@@ -1696,8 +1746,10 @@ var DataBlock,
     xposfis:integer;
 begin
   try
-    PonPuertoPos(xPosCarga);
     result:=false;
+    if not PosicionRecibida(xPosCarga) then
+      Exit;
+    PonPuertoPos(xPosCarga);
     if xpm in [0..4] then begin
       if xpm=0 then
         xposfis:=15
@@ -1722,8 +1774,10 @@ var DataBlock,
     stComando :string;
 begin
   try
-    PonPuertoPos(xPosCarga);
     result:=false;
+    if not PosicionRecibida(xPosCarga) then
+      Exit;
+    PonPuertoPos(xPosCarga);
     if xTipoPreset=1 then begin  // Pesos
       stComando:= char(ControlByte(xPosCarga,7))+#33+ConvierteBCD(xValor*WtwDivImporte,6);
       DataBlock:=EmpacaWayne(stComando);
@@ -2411,8 +2465,10 @@ var DataBlock,
     xprecio:integer;
 begin
   try
-    PonPuertoPos(xPosCarga);
     result:=false;
+    if not PosicionRecibida(xPosCarga) then
+      Exit;
+    PonPuertoPos(xPosCarga);
     for xp:=1 to TPosCarga[xPosCarga].nocomb do begin
       xposfis:=TPosCarga[xPosCarga].TPosx[xp];
       if TPosCarga[xPosCarga].TNuevoPrec[xp]>0 then begin
@@ -2520,7 +2576,7 @@ begin
         SwEspera:=true;
         HoraEspera:=Now;
         AgregaLog('PosCiclo: '+IntToStr(PosCiclo)+' - '+'NumPaso: '+IntToStr(NumPaso));
-        if PosCiclo in [1..MaxPosCarga] then with TPosCarga[PosCiclo] do begin
+        if PosicionRecibida(PosCiclo) then with TPosCarga[PosCiclo] do begin
           StrCiclo:=StrCiclo+inttostr(PosCiclo);
           while length(StrCiclo)>20 do
             delete(StrCiclo,1,1);
@@ -2789,7 +2845,12 @@ begin
             end;
           end;
         end
-        else posciclo:=1;
+        else begin
+          // Los huecos de INITIALIZE se reportan en estatus, pero no se sondean.
+          NumPaso:=0;
+          AvanzaPosCiclo;
+          SwEspera:=false;
+        end;
       end;
     except
       on e:Exception do begin
@@ -2826,7 +2887,8 @@ begin
           StCiclo:=0;
       end;
       PonPuertoPos(PosCiclo);
-    until (stciclo=TPosCarga[PosCiclo].xCiclo)or(TPosCarga[PosCiclo].Estatus>1);
+    until TPosCarga[PosCiclo].SwRecibida and
+          ((stciclo=TPosCarga[PosCiclo].xCiclo)or(TPosCarga[PosCiclo].Estatus>1));
   except
     on e:Exception do begin
       AgregaLog('Error AvanzaPosCiclo: '+e.Message);
@@ -3148,8 +3210,14 @@ begin
   if posCargaList = nil then
     Exit;
 
-  posIndex0 := xpos - 1;
-  if (posIndex0 < 0) or (posIndex0 >= posCargaList.Count) then
+  posIndex0 := -1;
+  for hoseIdx := 0 to posCargaList.Count - 1 do
+    if TlkJSONObject(posCargaList.Child[hoseIdx]).Field['DispenserId'].Value = xpos then
+    begin
+      posIndex0 := hoseIdx;
+      Break;
+    end;
+  if posIndex0 < 0 then
     Exit;
 
   posObj   := TlkJSONobject(posCargaList.Child[posIndex0]);
@@ -3480,6 +3548,7 @@ begin
     if (TipoClb[1]='5') or (ConfAdic<>'') then
       FluStd(0, ConfAdic);
     AddPeticionJSON(folio, 'True|');
+    Responder(TlkJSON.GenerateText(rootJSON));
   except
     on e:Exception do begin
       AgregaLog('Excepcion Iniciar: '+e.Message+'|');
