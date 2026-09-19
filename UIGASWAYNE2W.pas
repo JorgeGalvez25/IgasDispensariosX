@@ -2096,7 +2096,7 @@ procedure TSQLW2Reader.ProcesaComandos;
 var ss,rsp,scmnd,precios      :string;
     SnImporteStr,decImporteStr,flujoStr :string;
     xcmnd,xpos,xcomb,
-    xp,xfolio,i,codigoProteccion :integer;
+    xp,xfolio,i,codigoProteccion,posRecibidas :integer;
     ximporte,xlitros,nprec  :real;
 begin
   try
@@ -2312,12 +2312,14 @@ begin
         else if (ss='CPREC') then begin
           precios:=ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' ');
           for xpos:=1 to MaxPosCarga do with TPosCarga[xpos] do begin
-            for i:=1 to NoElemStrSep(precios,'|') do begin
-              nprec:=StrToFloatDef(ExtraeElemStrSep(precios,i,'|'),-1);
-              for xp:=1 to NoComb do if (i=TComb[xp]) and (nprec>0) then
-                TNuevoPrec[xp]:=nprec;
+            if SwRecibida then begin
+              for i:=1 to NoElemStrSep(precios,'|') do begin
+                nprec:=StrToFloatDef(ExtraeElemStrSep(precios,i,'|'),-1);
+                for xp:=1 to NoComb do if (i=TComb[xp]) and (nprec>0) then
+                  TNuevoPrec[xp]:=nprec;
+              end;
+              TCambioPrecN1:=true;
             end;
-            TCambioPrecN1:=true;
           end;
         end
         else if (ss='FLUSTD') or (ss='FLUMIN') then begin
@@ -2332,13 +2334,15 @@ begin
           end
           else begin
             for xpos:=1 to MaxPosCarga do with TPosCarga[xpos] do
-              xFlu:=IfThen(ss='FLUSTD',1,0);
+              if SwRecibida then
+                xFlu:=IfThen(ss='FLUSTD',1,0);
           end;
         end
         else if (ss='FLUACT') then begin
           rsp:='OK';
           for xpos:=1 to MaxPosCarga do
-            TPosCarga[xpos].FluAct:=True;
+            if TPosCarga[xpos].SwRecibida then
+              TPosCarga[xpos].FluAct:=True;
         end
         else if (ss='PROT') then begin
           if TipoClb[1]<>'5' then
@@ -2360,7 +2364,8 @@ begin
           if TipoClb[1]='5' then begin
             i:=0;
             for xpos:=1 to MaxPosCarga do
-              if (TPosCarga[xpos].FluAct) or (TPosCarga[xpos].FluActMang<>0) then
+              if TPosCarga[xpos].SwRecibida and
+                 ((TPosCarga[xpos].FluAct) or (TPosCarga[xpos].FluActMang<>0)) then
                 inc(i);
             if (StFlu=0) and (StProtec=0) and (i=0) then begin
               rsp:='OK';
@@ -2371,9 +2376,13 @@ begin
           end
           else begin
             i:=0;
+            posRecibidas:=0;
             for xpos:=1 to MaxPosCarga do with TPosCarga[xpos] do
-              i:=i+xFlu;
-            if (i=MaxPosCarga*-1) or (i=MaxPosCarga*2) then begin
+              if SwRecibida then begin
+                inc(posRecibidas);
+                i:=i+xFlu;
+              end;
+            if (i=posRecibidas*-1) or (i=posRecibidas*2) then begin
               rsp:='OK';
               GuardarLog(0);
             end
