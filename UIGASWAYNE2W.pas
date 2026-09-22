@@ -1974,8 +1974,12 @@ begin
       if (separador<=1) or (separador=Length(elemento)) then
         raise Exception.Create('ConfAdic: elemento invalido ['+elemento+']');
       xpos:=StrToIntDef(Trim(Copy(elemento,1,separador-1)),-1);
-      if not (xpos in [1..MaximoDePosiciones]) then
-        raise Exception.Create('ConfAdic: posicion no valida '+IntToStr(xpos));
+      // Configura solamente posiciones registradas por INITIALIZE.
+      if not PosicionRecibida(xpos) then begin
+        AgregaLog('ConfAdic FLUACT ignora posicion no registrada en INITIALIZE: '+
+          IntToStr(xpos));
+        Continue;
+      end;
       if posicionesDefinidas[xpos] then
         raise Exception.Create('ConfAdic: posicion repetida '+IntToStr(xpos));
       posicionesDefinidas[xpos]:=True;
@@ -2007,7 +2011,7 @@ begin
       end;
 
   for xpos:=1 to MaximoDePosiciones do
-    with TPosCarga[xpos] do begin
+    if PosicionRecibida(xpos) then with TPosCarga[xpos] do begin
       for xmang:=1 to 3 do begin
         TAdicf[xpos,xmang]:=0;
         FluActConfigurado[xmang]:=False;
@@ -4019,9 +4023,7 @@ begin
       if (folio=0) and (TipoClb[1]<>'5') and (NoElemStrSep(msj, ';')=0) then
         Exit;
 
-      if TipoClb[1]='5' then
-        CargaFlujoAct(msj)
-      else begin
+      if TipoClb[1]<>'5' then begin
         if Pos(':',msj)>0 then
           raise Exception.Create('ConfAdic por posicion requiere TipoClb=5; '+
             'verifique que la clave del INI no sea -TipoClb');
@@ -4039,8 +4041,9 @@ begin
           TAdic[i]:=nuevosAdic[i];
       end;
 
-      // La configuracion se persiste solamente despues de validarla completa.
-      if folio>0 then begin
+      // En TipoClb=5, FLUSTD activa el flujo estandar.
+      // ConfAdic se carga al terminar INITIALIZE.
+      if (folio>0) and (TipoClb[1]<>'5') then begin
         config:=TIniFile.Create(ExtractFilePath(ParamStr(0))+'PDISPENSARIOS.ini');
         try
           config.WriteString('CONF','ConfAdic',msj);
@@ -4095,8 +4098,12 @@ begin
           elemento := Trim(ExtraeElemStrSep(msj, i, ';'));
           if elemento = '' then Continue;
           xpos := StrToInt(ExtraeElemStrSep(elemento, 1, ':'));
-          if (xpos < 1) or (xpos > MaxPosCarga) or (xpos > MaximoDePosiciones) then
-            raise Exception.Create('Posicion FLUACT no disponible: ' + IntToStr(xpos));
+          // Procesa solamente posiciones registradas por INITIALIZE.
+          if not PosicionRecibida(xpos) then begin
+            AgregaLog('FLUACT ignora posicion no registrada en INITIALIZE: ' +
+              IntToStr(xpos));
+            Continue;
+          end;
           mangueras := ExtraeElemStrSep(elemento, 2, ':');
           if (Trim(mangueras) = '') or (NoElemStrSep(mangueras, ',') > 3) then
             raise Exception.Create('FLUACT requiere de 1 a 3 mangueras');
@@ -4114,6 +4121,8 @@ begin
         elemento := Trim(ExtraeElemStrSep(msj, i, ';'));
         if elemento = '' then Continue;
         xpos := StrToInt(ExtraeElemStrSep(elemento, 1, ':'));
+        if not PosicionRecibida(xpos) then
+          Continue;
         mangueras := ExtraeElemStrSep(elemento, 2, ':');
         for j := 1 to 3 do begin
           valor := Trim(ExtraeElemStrSep(mangueras, j, ','));
