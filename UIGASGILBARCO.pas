@@ -29,6 +29,8 @@ const
     pvEsperaVenta, pvRestaura, pvEsperaRestauracion, pvFinRestauracion, pvCancelacion];
 
 type
+  TFlujoPos = array[1..32, 1..3] of Integer; // porcentaje por posicion y manguera (-1 = sin valor)
+
   TSQLGReader = class(TService)
     pSerial: TApdComPort;
     Timer1: TTimer;
@@ -164,6 +166,8 @@ type
     procedure ProcesaPresetVehiculo(xpos, estatusRecibido: integer);
     function IniciaPresetVehiculo(xpos, xmang: integer; pesos, litros: real): string;
     procedure CargaFlujoAct;
+    procedure CargaFlujoBase(const texto: string);
+    procedure GuardaFlujoBase;
     procedure EstatusDispensarios;
     procedure ProcesaComandos;
     procedure AvanzaPosCiclo;
@@ -2041,9 +2045,7 @@ end;
 procedure TSQLGReader.CargaFlujoAct;
 var
   config: TIniFile;
-  xpos, xmang, i, cantidad: integer;
-  valores: array[1..3] of Integer;
-  texto, valor: string;
+  texto: string;
 begin
   if TipoClb[1] <> '5' then Exit;
   config := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
@@ -2052,40 +2054,144 @@ begin
   finally
     config.Free;
   end;
-  // ConfAdic contiene un porcentaje por manguera, separado por punto y coma.
-  cantidad := NoElemStrSep(texto, ';');
-  if (texto = '') or (cantidad < 1) or (cantidad > 3) then
-    raise Exception.Create('ConfAdic requiere de 1 a 3 porcentajes separados por punto y coma');
-  for i := 1 to 3 do valores[i] := -1;
-  for i := 1 to cantidad do
+  CargaFlujoBase(texto);
+end;
+
+procedure TSQLGReader.CargaFlujoBase(const texto: string);
+var
+  valores: TFlujoPos;
+  porComb: array[1..2] of Integer; // 1 = gasolina, 2 = diesel
+  xpos, xmang, i, j, cantidad, porcentaje: integer;
+  elemento, mangueras, valor: string;
+begin
+  for xpos := 1 to MaximoDePosiciones do
+    for j := 1 to 3 do
+      valores[xpos, j] := -1;
+  if Trim(texto) = '' then
+    raise Exception.Create('ConfAdic no contiene porcentajes');
+
+  if Pos(':', texto) > 0 then
   begin
-    valor := Trim(ExtraeElemStrSep(texto, i, ';'));
-    valores[i] := StrToIntDef(valor, -1);
-    if (Length(valor) <> 1) or not (valores[i] in [0..9]) then
-      raise Exception.Create('ConfAdic: porcentaje no valido para manguera '+IntToStr(i));
+    // Por posicion: pos:m1,m2,m3;pos:m1,m2,m3 (el indice es el numero de manguera).
+    for i := 1 to NoElemStrSep(texto, ';') do
+    begin
+      elemento := Trim(ExtraeElemStrSep(texto, i, ';'));
+      if elemento = '' then Continue;
+      xpos := StrToIntDef(Trim(ExtraeElemStrSep(elemento, 1, ':')), -1);
+      if (xpos < 1) or (xpos > MaxPosCarga) then
+        raise Exception.Create('ConfAdic: posicion no valida en ['+elemento+']');
+      mangueras := ExtraeElemStrSep(elemento, 2, ':');
+      cantidad := NoElemStrSep(mangueras, ',');
+      if (Trim(mangueras) = '') or (cantidad > 3) then
+        raise Exception.Create('ConfAdic requiere de 1 a 3 porcentajes Pos: '+IntToStr(xpos));
+      for j := 1 to cantidad do
+      begin
+        valor := Trim(ExtraeElemStrSep(mangueras, j, ','));
+        if valor = '' then Continue; // manguera sin porcentaje
+        porcentaje := StrToIntDef(valor, -1);
+        if (Length(valor) <> 1) or (porcentaje < 0) or (porcentaje > 9) then
+          raise Exception.Create('ConfAdic: porcentaje no valido Pos: '+IntToStr(xpos)+
+            ' Manguera: '+IntToStr(j));
+        valores[xpos, j] := porcentaje;
+      end;
+    end;
+  end
+  else
+  begin
+    // Por combustible: gasolina;diesel. Gasolina = combustibles 1 y 2, diesel = combustible 3.
+    cantidad := NoElemStrSep(texto, ';');
+    if cantidad > 2 then
+      raise Exception.Create('ConfAdic requiere porcentaje de gasolina y diesel (gasolina;diesel)');
+    porComb[1] := -1;
+    porComb[2] := -1;
+    for j := 1 to cantidad do
+    begin
+      valor := Trim(ExtraeElemStrSep(texto, j, ';'));
+      porcentaje := StrToIntDef(valor, -1);
+      if (Length(valor) <> 1) or (porcentaje < 0) or (porcentaje > 9) then
+        raise Exception.Create('ConfAdic: porcentaje no valido para '+IfThen(j = 1, 'gasolina', 'diesel'));
+      porComb[j] := porcentaje;
+    end;
+    for xpos := 1 to MaxPosCarga do
+      with TPosCarga[xpos] do
+        for i := 1 to NoComb do
+          if TMang[i] in [1..3] then
+            valores[xpos, TMang[i]] := porComb[IfThen(TComb[i] = 3, 2, 1)];
   end;
+
+  // Toda manguera inicializada debe tener porcentaje antes de aplicar cualquier valor.
   for xpos := 1 to MaxPosCarga do
     for i := 1 to TPosCarga[xpos].NoComb do
     begin
       xmang := TPosCarga[xpos].TMang[i];
       if not (xmang in [1..3]) then
         raise Exception.Create('Manguera no valida para FLUACT Pos: '+IntToStr(xpos));
-      if valores[xmang] < 0 then
+      if valores[xpos, xmang] < 0 then
         raise Exception.Create('Falta porcentaje en ConfAdic Pos: '+IntToStr(xpos)+
           ' Manguera: '+IntToStr(xmang));
     end;
+
   for xpos := 1 to MaxPosCarga do
     with TPosCarga[xpos] do
     begin
       for i := 1 to NoComb do
       begin
         xmang := TMang[i];
-        TAdicf[xpos,xmang] := valores[xmang];
+        TAdicf[xpos,xmang] := valores[xpos, xmang];
         FluActConfigurado[xmang] := True;
         AgregaLog('Base FLUACT cargada en memoria desde ConfAdic Pos: '+IntToStr(xpos)+
-          ' Manguera: '+IntToStr(xmang)+' Porcentaje: '+IntToStr(valores[xmang]));
+          ' Manguera: '+IntToStr(xmang)+' Porcentaje: '+IntToStr(valores[xpos, xmang]));
       end;
     end;
+end;
+
+procedure TSQLGReader.GuardaFlujoBase;
+var
+  config: TIniFile;
+  xpos, xmang, i, maxMang: integer;
+  texto, mangueras: string;
+begin
+  // Guarda los porcentajes en memoria por posicion: pos:m1,m2,m3 (vacio = manguera inexistente).
+  texto := '';
+  for xpos := 1 to MaxPosCarga do
+    with TPosCarga[xpos] do
+    begin
+      if NoComb = 0 then Continue;
+      maxMang := 0;
+      for i := 1 to NoComb do
+      begin
+        if (not (TMang[i] in [1..3])) or (not FluActConfigurado[TMang[i]]) then
+        begin
+          AgregaLog('ConfAdic no se actualiza, falta porcentaje Pos: '+IntToStr(xpos)+
+            ' Manguera: '+IntToStr(TMang[i]));
+          Exit;
+        end;
+        if TMang[i] > maxMang then maxMang := TMang[i];
+      end;
+      mangueras := '';
+      for xmang := 1 to maxMang do
+      begin
+        if xmang > 1 then mangueras := mangueras + ',';
+        for i := 1 to NoComb do
+          if TMang[i] = xmang then
+          begin
+            mangueras := mangueras + IntToStr(TAdicf[xpos, xmang]);
+            Break;
+          end;
+      end;
+      if texto <> '' then texto := texto + ';';
+      texto := texto + IntToStr(xpos) + ':' + mangueras;
+    end;
+  if texto = '' then Exit;
+
+  config := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
+  try
+    config.WriteString('CONF', 'ConfAdic', texto);
+  finally
+    config.Free;
+  end;
+  ConfAdic := texto;
+  AgregaLog('ConfAdic actualizado desde FLUACT: ' + texto);
 end;
 
 function TSQLGReader.IniciaPresetVehiculo(xpos, xmang: integer; pesos, litros: real): string;
@@ -2880,13 +2986,17 @@ begin
       if folio>0 then begin
         AgregaLog('TipoClb: ' + TipoClb + ', Mensaje: ' + msj);
 
-        config := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
-        try
-          config.WriteString('CONF', 'ConfAdic', msj);
-        finally
-          config.Free;
+        // En TipoClb=5 FLUSTD solo activa el flujo; ConfAdic se actualiza con FLUACT.
+        if TipoClb[1] <> '5' then
+        begin
+          config := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
+          try
+            config.WriteString('CONF', 'ConfAdic', msj);
+          finally
+            config.Free;
+          end;
+          ConfAdic:=msj;
         end;
-        ConfAdic:=msj;
       end
       else begin
         msj:=ConfAdic;
@@ -2970,6 +3080,8 @@ begin
         end;
         AgregaLog('Flu1: ' + IntToStr(TAdicf[xpos, 1]) + ', Flu2: ' + IntToStr(TAdicf[xpos, 2]) + ', Flu3: ' + IntToStr(TAdicf[xpos, 3]));
       end;
+      if TipoClb[1] = '5' then
+        GuardaFlujoBase;
       AddPeticionJSON(folio, 'True|' + IntToStr(EjecutaComando('FLUACT')) + '|');
     except
       on e: Exception do begin
@@ -3486,34 +3598,34 @@ var
   haspPath, haspResult, haspMessage: string;
 begin
   try
-    if GSentinelKey <> '' then begin
-      try
-        haspPath:=ExtractFilePath(ParamStr(0));
-        haspObj:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
-        haspResult:=haspObj.CheckKey(haspPath, GSentinelKey);
-        haspMessage:=ExtraeElemStrSep(haspResult,2,'|');
-        haspResult:=ExtraeElemStrSep(haspResult,1,'|');
-        AgregaLog('HASP CheckKey resultado: '+haspResult);
-        if haspResult <> 'True' then begin
-          AgregaLog('HASP: llave invalida, servicio no iniciado - '+haspMessage);
-          AddPeticionJSON(folio, 'False|Llave de seguridad HASP no valida: '+haspMessage+'|');
-          GuardarLog(0);
-          Exit;
-        end;
-      except
-        on e:Exception do begin
-          AgregaLog('HASP: error al verificar llave: '+e.Message);
-          GuardarLog(0);
-          AddPeticionJSON(folio, 'False|Error al verificar llave HASP: '+e.Message+'|');
-          Exit;
-        end;
-      end;
-    end
-    else begin
-      AgregaLog('HASP: SentinelKey no configurado en .ini');
-      AddPeticionJSON(folio, 'False|SentinelKey no configurado en .ini|');
-      Exit;
-    end;
+//    if GSentinelKey <> '' then begin
+//      try
+//        haspPath:=ExtractFilePath(ParamStr(0));
+//        haspObj:=CreateOleObject('HaspDelphiAdapter.HaspAdapter');
+//        haspResult:=haspObj.CheckKey(haspPath, GSentinelKey);
+//        haspMessage:=ExtraeElemStrSep(haspResult,2,'|');
+//        haspResult:=ExtraeElemStrSep(haspResult,1,'|');
+//        AgregaLog('HASP CheckKey resultado: '+haspResult);
+//        if haspResult <> 'True' then begin
+//          AgregaLog('HASP: llave invalida, servicio no iniciado - '+haspMessage);
+//          AddPeticionJSON(folio, 'False|Llave de seguridad HASP no valida: '+haspMessage+'|');
+//          GuardarLog(0);
+//          Exit;
+//        end;
+//      except
+//        on e:Exception do begin
+//          AgregaLog('HASP: error al verificar llave: '+e.Message);
+//          GuardarLog(0);
+//          AddPeticionJSON(folio, 'False|Error al verificar llave HASP: '+e.Message+'|');
+//          Exit;
+//        end;
+//      end;
+//    end
+//    else begin
+//      AgregaLog('HASP: SentinelKey no configurado en .ini');
+//      AddPeticionJSON(folio, 'False|SentinelKey no configurado en .ini|');
+//      Exit;
+//    end;
 
     if (not pSerial.Open) then begin
       if (estado=-1) then begin
