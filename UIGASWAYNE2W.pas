@@ -218,6 +218,7 @@ type
        EsperaFinVenta :integer;
 
         SwStatusFV,
+        SwLecturaFinalPendiente,
         SwVentaPagada,
         SwLeeVenta,
        SwLeePrecios,
@@ -668,6 +669,7 @@ begin
       ModoOpera:='Prepago';
       SwLeeVenta:=true;
       SwStatusFV:=false;
+      SwLecturaFinalPendiente:=false;
       SwVentaPagada:=false;
       SwCambiaPrecio:=false;
       SwLeePrecios:=true;
@@ -1403,16 +1405,20 @@ begin
       if not SwRecibida then
         xestado:=xestado+'0' // Hueco de INITIALIZE: existe, pero no se consulta
       else if not SwDesHabil then begin
-        case estatus of
-          0:xestado:=xestado+'0'; // Sin Comunicaci�n
-          1:xestado:=xestado+'1'; // Inactivo (Idle)
-          2:xestado:=xestado+'2'; // Despachando (In Use)
-          3,4:xestado:=xestado+'3';
-          5:xestado:=xestado+'5'; // Llamando (Calling) Pistola Levantada
-          9:xestado:=xestado+'9'; // Autorizado
-          8:xestado:=xestado+'8'; // Detenido (Stoped)
-          else
-            xestado:=xestado+'0';
+        if SwLecturaFinalPendiente then
+          xestado:=xestado+'2' // Mantener como cargando hasta recibir la lectura final.
+        else begin
+          case estatus of
+            0:xestado:=xestado+'0'; // Sin Comunicaci�n
+            1:xestado:=xestado+'1'; // Inactivo (Idle)
+            2:xestado:=xestado+'2'; // Despachando (In Use)
+            3,4:xestado:=xestado+'3';
+            5:xestado:=xestado+'5'; // Llamando (Calling) Pistola Levantada
+            9:xestado:=xestado+'9'; // Autorizado
+            8:xestado:=xestado+'8'; // Detenido (Stoped)
+            else
+              xestado:=xestado+'0';
+          end;
         end;
       end
       else xestado:=xestado+'7'; // Deshabilitado
@@ -2301,7 +2307,10 @@ begin
           xpos:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '),0);
           rsp:='OK';
           if (xpos in [1..MaxPosCarga]) then begin
-            if (TPosCarga[xpos].Estatus in [3,4]) then begin // EOT
+            if (TPosCarga[xpos].Estatus in [3,4]) and
+               TPosCarga[xpos].SwLecturaFinalPendiente then
+              rsp:='Posicion aun tiene lectura final pendiente'
+            else if (TPosCarga[xpos].Estatus in [3,4]) then begin // EOT
               // PAYMENT confirma la venta reportada. Sin esta marca, el mismo
               // estatus fisico y el importe conservado vuelven a clasificarla
               // como fin de venta en el siguiente sondeo.
@@ -2685,6 +2694,8 @@ begin
                         AgregaLog('Detecto Fin Venta: '+inttostr(PosCiclo));
                         swdesp:=false;
                         SwStatusFV:=true;
+                        SwLecturaFinalPendiente:=true;
+                        SwLeeVenta:=true;
                         Estatus:=3;
                       end;
                       if (Estatusant=0)and(estatus=1) then begin
@@ -2694,11 +2705,15 @@ begin
                         SinComunicacion := False;
                       end;
                       if (EstatusAnt in [3,4])and(Estatus=1) then begin
-                        swcargando:=false;
-                        if (EsperaFinVenta=1) and (volumen>0) then
+                        if SwLecturaFinalPendiente then
                           Estatus:=3
-                        else
-                          EsperaFinVenta:=0;
+                        else begin
+                          swcargando:=false;
+                          if (EsperaFinVenta=1) and (volumen>0) then
+                            Estatus:=3
+                          else
+                            EsperaFinVenta:=0;
+                        end;
                       end;
                       if (estatusant = 0) and (estatus = 0) then
                       begin
@@ -2713,7 +2728,10 @@ begin
                         Esperamiliseg(300);
                         ReanudaDespacho(PosCiclo);
                       end;
-                      ActualizaCampoJSON(PosCiclo,'Estatus',estatus);
+                      if SwLecturaFinalPendiente then
+                        ActualizaCampoJSON(PosCiclo,'Estatus',2)
+                      else
+                        ActualizaCampoJSON(PosCiclo,'Estatus',estatus);
 
                       ProcesaPresetVehiculo(PosCiclo,estatusRecibido);
                       if (TipoClb[1]='5') and (PasoPresetVehiculo=pvLibre) then begin
@@ -2804,11 +2822,21 @@ begin
                       if abs(volumen-xvolumen)>0.5 then
                         volumen:=xvolumen;
                       AgregaLog('R> '+FormatFloat('###,##0.00',Volumen)+' / '+FormatFloat('###,##0.00',precio)+' / '+FormatFloat('###,##0.00',importe));
+                      if SwLecturaFinalPendiente then begin
+                        SwLecturaFinalPendiente:=false;
+                        swcargando:=false;
+                        swdesp:=false;
+                        SwStatusFV:=false;
+                        if PosActual in [1..MCxP] then
+                          SwLeeTotales[PosActual]:=true;
+                      end;
                     end;
                     ActualizaCampoJSON(PosCiclo,'HoraOcc',FormatDateTime('yyyy-mm-dd',HoraOcc)+'T'+FormatDateTime('hh:nn',HoraOcc));
                     ActualizaCampoJSON(PosCiclo,'Volumen',Volumen);
                     ActualizaCampoJSON(PosCiclo,'Precio',precio);
                     ActualizaCampoJSON(PosCiclo,'Importe',importe);
+                    if not SwLecturaFinalPendiente then
+                      ActualizaCampoJSON(PosCiclo,'Estatus',estatus);
                   end;
                 end;
               3:if (estatus>0)and(not swdeshabil) then begin        // LEE TOTALES
