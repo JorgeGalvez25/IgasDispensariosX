@@ -2305,7 +2305,17 @@ begin
              enviado := EnviaPresetBomba8(xpos, MangPresetVehiculo, 1,
                PesosPresetVehiculo, LitrosPresetVehiculo);
            if enviado then
-             PasoPresetVehiculo := pvAutorizaVenta;
+           begin
+             // Autoriza en la misma consulta; si falla se reintenta en pvAutorizaVenta.
+             if Autoriza(xpos) then
+             begin
+               PasoPresetVehiculo := pvEsperaVenta;
+               SwPreset := true;
+               AgregaLog('Se autorizo preset real flujo vehiculo Pos: '+IntToStr(xpos));
+             end
+             else
+               PasoPresetVehiculo := pvAutorizaVenta;
+           end;
          end;
       pvAutorizaVenta: if estatusRecibido in [1, 5] then
          begin
@@ -2924,7 +2934,10 @@ begin
         if StCiclo>2 then
           StCiclo:=0;
       end;
-    until (stciclo=TPosCarga[PosCiclo].xCiclo)or(TPosCarga[PosCiclo].Estatus>1);
+    // Las posiciones con flujo por vehiculo o FLUACT en proceso se consultan en cada vuelta.
+    until (stciclo=TPosCarga[PosCiclo].xCiclo)or(TPosCarga[PosCiclo].Estatus>1)or
+          (TPosCarga[PosCiclo].PasoPresetVehiculo in pvEnProceso)or
+          (TPosCarga[PosCiclo].FluActMang<>0);
   except
     on e:Exception do begin
       AgregaLog('Error AvanzaPosCiclo: '+e.Message);
