@@ -156,6 +156,8 @@ type
     procedure ProcesaPresetVehiculo(xpos:integer);
     procedure ProcesaFluAct(xpos:integer);
     procedure ProcesaFluStd;
+    function CodigoProtecciones(const valores: string):integer;
+    procedure ProcesaProtecciones;
     procedure ProcesaFlujos;
   end;
 
@@ -274,6 +276,7 @@ const idSTX = #2;
       SegReintentoEsp = 3;   // Segundos sin respuesta antes de reenviar un comando de flujo
       SegLimiteEsp    = 30;  // Segundos maximos de un preset especial
       MaxIntentosEsp  = 3;
+      ValorProteccion = 95750;  // 957.50 (ninguna) a 957.57 (todas): 1 lt=1, 10 lts=2, 20 lts=4
 
       // ---- Pasos de la secuencia de Flujo por Vehiculo ----
       pvLibre              = 0;
@@ -323,6 +326,10 @@ var
   StFlu,                 // 0 libre, 1/2 FLUSTD por enviar/enviado, 11/12 FLUMIN por enviar/enviado
   PosFlu,
   IntentosFlu  :integer;
+  StProtec,              // 0 libre, 1 por enviar, 2 enviado
+  PosProtec,
+  IntentosProtec,
+  ProteccionesWayne :integer;
   FlujoPorVehiculo :Boolean;
 
 implementation
@@ -1475,6 +1482,9 @@ begin
     StFlu:=0;
     PosFlu:=0;
     IntentosFlu:=0;
+    StProtec:=0;
+    PosProtec:=0;
+    IntentosProtec:=0;
     for i:=1 to MaxPosCarga do with TPosCarga[i] do
       if EspPaso<>0 then begin
         EspPaso:=0;
@@ -2453,6 +2463,21 @@ begin
             if TPosCarga[xpos].NoComb>0 then
               TPosCarga[xpos].FluAct:=True;
         end
+        // CMND: PROGRAMA PROTECCIONES (PROT 1;10;20)
+        else if ss='PROT' then begin
+          if not SwTipoClb5 then
+            rsp:='Protecciones Wayne solo disponibles para TipoClb=5'
+          else if StProtec>0 then
+            rsp:='Programacion de protecciones en proceso'
+          else begin
+            ProteccionesWayne:=CodigoProtecciones(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '));
+            StProtec:=1;
+            PosProtec:=0;
+            IntentosProtec:=0;
+            rsp:='OK';
+            AgregaLog('Protecciones Wayne registradas con codigo '+IntToStr(ProteccionesWayne));
+          end;
+        end
         else if ss='FLUSTD' then begin
           if Licencia3Ok then begin
             for xpos:=1 to MaxPosCarga do begin
@@ -2486,7 +2511,7 @@ begin
           for xpos:=1 to MaxPosCarga do
             if TPosCarga[xpos].FluAct or (TPosCarga[xpos].FluActMang<>0) then
               inc(sumAdi);
-          if (StFlu=0) and (sumAdi=0) then begin
+          if (StFlu=0) and (StProtec=0) and (sumAdi=0) then begin
             rsp:='OK';
             GuardarLog;
           end
@@ -3507,7 +3532,7 @@ begin
       FluActMang:=0;
       Exit;
     end;
-    if (StFlu<>0) or (estatus<>1) or SwDesHabilitado or SwOCC or (EspPaso<>0) or
+    if (StFlu<>0) or (StProtec<>0) or (estatus<>1) or SwDesHabilitado or SwOCC or (EspPaso<>0) or
        (PasoPresetVehiculo<>pvLibre) then
       Exit;
     xmang:=1;
@@ -3586,7 +3611,67 @@ begin
         ProcesaPresetVehiculo(xpos);
         ProcesaFluAct(xpos);
       end;
+  // Protecciones antes que FLUSTD/FLUMIN para leer su resultado antes de que la posicion se reutilice
+  ProcesaProtecciones;
   ProcesaFluStd;
+end;
+
+// Convierte los litros permitidos (1, 10 y 20) al codigo de bits de las protecciones
+function TSQLWReader.CodigoProtecciones(const valores: string): integer;
+var
+  i:integer;
+  valor:string;
+begin
+  Result:=0;
+  for i:=1 to NoElemStrSep(valores,';') do begin
+    valor:=Trim(ExtraeElemStrSep(valores,i,';'));
+    if valor='' then
+      Continue;
+    case StrToIntDef(valor,-1) of
+      1: Result:=Result or 1;
+      10: Result:=Result or 2;
+      20: Result:=Result or 4;
+    else
+      AgregaLog('Proteccion ignorada por no estar permitida: '+valor+' litros');
+    end;
+  end;
+end;
+
+// Envia el preset de protecciones a una posicion inactiva cuando no hay FLUSTD/FLUMIN en curso
+procedure TSQLWReader.ProcesaProtecciones;
+var
+  xpos:integer;
+begin
+  if (StProtec=1) and (StFlu=0) then begin
+    for xpos:=1 to MaxPosCarga do
+      with TPosCarga[xpos] do
+        if (NoComb>0) and (estatus=1) and (not SwDesHabilitado) and (not SwOCC) and
+           (EspPaso=0) and (PasoPresetVehiculo=pvLibre) and (FluActMang=0) then begin
+          AgregaLog('Preset protecciones Posicion '+IntToClaveNum(xpos,2)+
+            ' Codigo '+IntToStr(ProteccionesWayne));
+          IniciaEspecial(xpos,(ValorProteccion+ProteccionesWayne)/100);
+          PosProtec:=xpos;
+          StProtec:=2;
+          Exit;
+        end;
+  end
+  else if (StProtec=2) and (TPosCarga[PosProtec].EspPaso=0) then begin
+    if TPosCarga[PosProtec].EspResultado=1 then begin
+      AgregaLog('Envio correcto preset protecciones Pos: '+IntToStr(PosProtec)+
+        ' Codigo '+IntToStr(ProteccionesWayne));
+      StProtec:=0;
+    end
+    else begin
+      inc(IntentosProtec);
+      if IntentosProtec>=MaxIntentosEsp then begin
+        AgregaLog('Error preset protecciones: se descarta despues de '+IntToStr(IntentosProtec)+' intentos');
+        StProtec:=0;
+      end
+      else
+        StProtec:=1;
+    end;
+    PosProtec:=0;
+  end;
 end;
 
 end.
