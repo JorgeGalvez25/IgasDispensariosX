@@ -88,7 +88,6 @@ type
     ListaComandos:TStringList;
     horaLog:TDateTime;
     minutosLog:Integer;
-    version:String;
     function GetServiceController: TServiceController; override;
     procedure AgregaLogPetRes(lin: string);
     procedure Responder(socket:TCustomWinSocket;resp:string);
@@ -334,7 +333,7 @@ var
 
 implementation
 
-uses StrUtils, TypInfo, DateUtils, Math;
+uses StrUtils, TypInfo, DateUtils, Math, UVersionModulo;
 
 {$R *.DFM}
 
@@ -1536,7 +1535,7 @@ end;
 function TSQLWReader.GuardarLog: string;
 begin
   try
-    AgregaLog('Version: '+version);
+    AgregaLog(InfoVersionModulo('UIGASWAYNE'));
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes;
     Result:='True|'+rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt|';
@@ -1549,7 +1548,7 @@ end;
 function TSQLWReader.GuardarLogPetRes: string;
 begin
   try
-    AgregaLogPetRes('Version: '+version);
+    AgregaLogPetRes(InfoVersionModulo('UIGASWAYNE'));
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     Result:='True|';
   except

@@ -104,7 +104,6 @@ type
     estado:Integer;
     mapeoMangueras:String;
     xTurnoSocket:Integer;
-    version:String;
     ListaCmnd    :TStrings;
     FolioCmnd   :integer;
     horaLog:TDateTime;
@@ -305,7 +304,7 @@ var
 implementation
 
 uses
-  TypInfo, StrUtils, Math, DateUtils;
+  TypInfo, StrUtils, Math, DateUtils, UVersionModulo;
 
 {$R *.DFM}
 
@@ -3564,7 +3563,7 @@ procedure TSQLW2Reader.GuardarLog(folio: Integer);
 begin
   try
     horaLog:=Now;
-    AgregaLog('Version: '+version);
+    AgregaLog(InfoVersionModulo('UIGASWAYNE2W'));
     AgregaLog('Fecha y hora de arranque: '+FechaHoraExtToStr(HoraArranque));
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes(0);
@@ -3579,7 +3578,7 @@ end;
 procedure TSQLW2Reader.GuardarLogPetRes(folio: Integer);
 begin
   try
-    AgregaLogPetRes('Version: '+version);
+    AgregaLogPetRes(InfoVersionModulo('UIGASWAYNE2W'));
     AgregaLogPetRes('Fecha y hora de arranque: '+FechaHoraExtToStr(HoraArranque));
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     if folio>0 then

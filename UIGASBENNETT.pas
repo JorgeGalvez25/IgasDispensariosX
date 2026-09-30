@@ -78,7 +78,6 @@ type
     FolioCmnd   :integer;
     horaLog, horaAct:TDateTime;
     minutosLog:Integer;
-    version:String;
     xTurnoSocket:Integer;
 
     function GetServiceController: TServiceController; override;
@@ -260,7 +259,7 @@ var
 
 implementation
 
-uses StrUtils, TypInfo, DateUtils, Math;
+uses StrUtils, TypInfo, DateUtils, Math, UVersionModulo;
 
 {$R *.DFM}
 
@@ -2247,7 +2246,7 @@ end;
 procedure TSQLBReader.GuardarLog(folio:Integer);
 begin
   try
-    AgregaLog('Version: '+version);
+    AgregaLog(InfoVersionModulo('UIGASBENNETT'));
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes(0);
     GuardaLogComandos;
@@ -2262,7 +2261,7 @@ end;
 procedure TSQLBReader.GuardarLogPetRes(folio:Integer);
 begin
   try
-    AgregaLogPetRes('Version: '+version);
+    AgregaLogPetRes(InfoVersionModulo('UIGASBENNETT'));
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     if folio>0 then
       AddPeticionJSON(folio, 'True|');

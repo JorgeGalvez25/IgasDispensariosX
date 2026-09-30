@@ -45,7 +45,6 @@ type
     horaReinicio:TDateTime;
     horaLog:TDateTime;
     minutosLog:Integer;
-    version:String;
     function GetServiceController: TServiceController; override;
     procedure AgregaLogPetRes(lin: string);
     function CRC16(Data: AnsiString): AnsiString;
@@ -240,7 +239,7 @@ var
 
 implementation
 
-uses StrUtils, TypInfo, DateUtils, ConvUtils;
+uses StrUtils, TypInfo, DateUtils, ConvUtils, UVersionModulo;
 
 {$R *.DFM}
 
@@ -757,7 +756,7 @@ end;
 function TSQLHReader.GuardarLogPetRes(fecha:TDateTime=0): string;
 begin
   try
-    AgregaLogPetRes('Version: '+version);
+    AgregaLogPetRes(InfoVersionModulo('UIGASHONGYANG'));
     if fecha=0 then
       ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt')
     else
@@ -2311,7 +2310,7 @@ end;
 function TSQLHReader.GuardarLog(fecha:TDateTime=0): string;
 begin
   try
-    AgregaLog('Version: '+version);
+    AgregaLog(InfoVersionModulo('UIGASHONGYANG'));
     if fecha=0 then begin
       ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
       GuardarLogPetRes;

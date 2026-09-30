@@ -57,7 +57,6 @@ type
     ListaCmnd    :TStrings;
     FolioCmnd   :integer;
     CheckSumB:Boolean;
-    version:String;
     function GetServiceController: TServiceController; override;
     procedure AgregaLog(lin:string);
     procedure AgregaLogPetRes(lin: string);
@@ -239,7 +238,7 @@ var
 
 implementation
 
-uses StrUtils;
+uses StrUtils, UVersionModulo;
 
 {$R *.DFM}
 
@@ -1448,7 +1447,7 @@ end;
 function TSQLTReader.GuardarLog: string;
 begin
   try
-    AgregaLog('Version: '+version);
+    AgregaLog(InfoVersionModulo('UIGASTEAM'));
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes;
     Result:='True|'+rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt|';
@@ -1461,7 +1460,7 @@ end;
 function TSQLTReader.GuardarLogPetRes: string;
 begin
   try
-    AgregaLogPetRes('Version: '+version);
+    AgregaLogPetRes(InfoVersionModulo('UIGASTEAM'));
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     Result:='True|';
   except

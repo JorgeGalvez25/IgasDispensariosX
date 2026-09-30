@@ -86,7 +86,6 @@ type
     ListaComandos:TStringList;
     horaLog:TDateTime;
     minutosLog:Integer;
-    version:String;
     function GetServiceController: TServiceController; override;
     procedure AgregaLog(lin:string);
     procedure AgregaLogPetRes(lin: string);
@@ -260,7 +259,7 @@ var
 
 implementation
 
-uses StrUtils, TypInfo, DateUtils, Math;
+uses StrUtils, TypInfo, DateUtils, Math, UVersionModulo;
 
 {$R *.DFM}
 
@@ -2797,7 +2796,7 @@ end;
 function TSQLPReader.GuardarLog:string;
 begin
   try
-    AgregaLog('Version: '+version);
+    AgregaLog(InfoVersionModulo('UIGASPAM'));
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes;
     Result:='True|'+rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt|';
@@ -2810,7 +2809,7 @@ end;
 function TSQLPReader.GuardarLogPetRes:string;
 begin
   try
-    AgregaLogPetRes('Version: '+version);
+    AgregaLogPetRes(InfoVersionModulo('UIGASPAM'));
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     Result:='True|';
   except

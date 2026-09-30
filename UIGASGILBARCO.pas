@@ -104,7 +104,6 @@ type
     horaLog: TDateTime;
     minutosLog: Integer;
     xTurnoSocket:Integer;
-    version: string;
 
     function GetServiceController: TServiceController; override;
     procedure AgregaLog(lin: string);
@@ -281,7 +280,7 @@ var
 implementation
 
 uses
-  TypInfo, StrUtils, Variants, DateUtils, Math;
+  TypInfo, StrUtils, Variants, DateUtils, Math, UVersionModulo;
 
 {$R *.DFM}
 
@@ -3815,7 +3814,7 @@ procedure TSQLGReader.GuardarLog(folio: Integer);
 begin
   try
     horaLog:=Now;
-    AgregaLog('Version: '+version);
+    AgregaLog(InfoVersionModulo('UIGASGILBARCO'));
     AgregaLog('Fecha y hora de arranque: '+FechaHoraExtToStr(HoraArranque));
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes(0);
@@ -3830,7 +3829,7 @@ end;
 procedure TSQLGReader.GuardarLogPetRes(folio: Integer);
 begin
   try
-    AgregaLogPetRes('Version: '+version);
+    AgregaLogPetRes(InfoVersionModulo('UIGASGILBARCO'));
     AgregaLogPetRes('Fecha y hora de arranque: '+FechaHoraExtToStr(HoraArranque));
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     if folio>0 then

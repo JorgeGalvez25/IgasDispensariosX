@@ -75,7 +75,6 @@ type
     GtwTimeOut,             // Timeout miliseg
     GtwKairosFrec,
     GtwTiempoCmnd :integer; // Tiempo entre comandos miliseg
-    version:String;
     function  PonNivelPrecio(xNPos, xNPrec : integer) : boolean;
     function  DameEstatus(PosCarga:integer) : integer;
     procedure EstatusDispensarios;
@@ -233,7 +232,7 @@ var
 
 implementation
 
-uses TypInfo, StrUtils, Variants, DateUtils;
+uses TypInfo, StrUtils, Variants, DateUtils, UVersionModulo;
 
 {$R *.DFM}
 
@@ -760,7 +759,7 @@ end;
 function TSQLKReader.GuardarLog: string;
 begin
   try
-    AgregaLog('Version: '+version);
+    AgregaLog(InfoVersionModulo('UIGASKAIROS'));
     ListaLog.SaveToFile(rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     GuardarLogPetRes;
     Result:='True|'+rutaLog+'\LogDisp'+FiltraStrNum(FechaHoraToStr(Now))+'.txt|';
@@ -773,7 +772,7 @@ end;
 function TSQLKReader.GuardarLogPetRes: string;
 begin
   try
-    AgregaLog('Version: '+version);
+    AgregaLogPetRes(InfoVersionModulo('UIGASKAIROS'));
     ListaLogPetRes.SaveToFile(rutaLog+'\LogDispPetRes'+FiltraStrNum(FechaHoraToStr(Now))+'.txt');
     Result:='True|';
   except
