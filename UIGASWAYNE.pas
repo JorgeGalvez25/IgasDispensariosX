@@ -65,7 +65,9 @@ type
     SnImporte,
     SnLitros                :real;
     ConfAdic:String;
-    TAdic31   :array[1..32] of real; 
+    TipoClb:String;
+    SwTipoClb5:Boolean;
+    TAdic31   :array[1..32] of real;
     function CRC16(Data: string): string;
   public
     { Public declarations }
@@ -137,7 +139,24 @@ type
     function NoElemStrEnter(xstr:string):word;
     function ExtraeElemStrEnter(xstr:string;ind:word):string;
     function FluStd(msj: string):string;
-    function FluMin:string;      
+    function FluMin:string;
+    function FluAct(msj: string):string;
+    procedure CargaFlujoBase(const texto: string);
+    procedure GuardaFlujoBase;
+    function ArmaPreset(xpos:integer;ximporte,xlitros:real;xcomb:integer):string;
+    procedure EncolaComando(ss:string);
+    procedure IniciaEspecial(xpos:integer;xvalor:real);
+    function DecimalesPerdidosPreset(xpos:integer):integer;
+    procedure EnviaEspecial(xpos:integer);
+    procedure TerminaEspecial(xpos:integer;xok:boolean);
+    procedure ProcesaEspecial(xpos:integer);
+    function AtiendeOCCFlujo(xcmnd:integer;var rsp:string):boolean;
+    function IniciaPresetVehiculo(xpos,xcomb,xflujo:integer;xpesos,xlitros:real):string;
+    procedure CancelaPresetVehiculo(xpos:integer);
+    procedure ProcesaPresetVehiculo(xpos:integer);
+    procedure ProcesaFluAct(xpos:integer);
+    procedure ProcesaFluStd;
+    procedure ProcesaFlujos;
   end;
 
 type
@@ -200,6 +219,34 @@ type
        MangActual:Integer;
        esDiesel:Boolean;
 
+       // ---- Preset especial TipoClb=5 (se envia y se cancela su autorizacion) ----
+       EspPaso,              // 0 libre, 1 enviado espera autorizacion, 2 cancelado espera liberacion
+       EspResultado,         // 0 sin resultado, 1 aplicado, 2 error
+       EspIntentos:Integer;
+       EspCancela:Boolean;   // preset especial interrumpido: se cancela con el siguiente estatus
+       EspValor:real;
+       EspHora,
+       EspHoraCmnd:TDateTime;
+
+       // ---- Flujo TipoClb=5 (FLUACT) ----
+       FluAct:Boolean;
+       FluActPendiente,
+       FluActConfigurado:array[1..3] of Boolean;
+       FluActMang,
+       FluActIntentos:Integer;
+
+       // ---- Flujo por Vehiculo ----
+       swflujovehiculo:Boolean;
+       flujovehiculo,
+       PasoPresetVehiculo,
+       MangPresetVehiculo,
+       CombPresetVehiculo,
+       IntentosPresetVehiculo:Integer;
+       PesosPresetVehiculo,
+       LitrosPresetVehiculo,
+       ValorFlujoOriginal:real;
+       HoraPresetVehiculo,
+       HoraCmndVehiculo:TDateTime;
      end;
 
      RegCmnd = record
@@ -218,8 +265,29 @@ const idSTX = #2;
       idNAK = #21;
       MaxEspera2=20;
       MaxEspera31=10;
-      MaxEspera3=20;      
+      MaxEspera3=20;
       MaximoDePosiciones = 32;
+
+      // ---- Flujo controlado por el modulo IGAS (TipoClb = 5) ----
+      ValorOn  = 93715;   // Preset que ACTIVA el flujo    (937.15)
+      ValorOff = 92476;   // Preset que DESACTIVA el flujo (924.76)
+      SegReintentoEsp = 3;   // Segundos sin respuesta antes de reenviar un comando de flujo
+      SegLimiteEsp    = 30;  // Segundos maximos de un preset especial
+      MaxIntentosEsp  = 3;
+
+      // ---- Pasos de la secuencia de Flujo por Vehiculo ----
+      pvLibre              = 0;
+      pvEsperaEspecial     = 1;  // Preset especial con el flujo del vehiculo
+      pvEsperaDisponible   = 2;  // Espera posicion disponible para el preset real
+      pvAutorizaVenta      = 3;  // Preset real enviado, espera autorizacion
+      pvVenta              = 4;  // Venta en curso hasta que la posicion queda inactiva
+      pvError              = 5;  // Requiere DVC para restaurar el flujo
+      pvRestaura           = 6;  // Espera posicion inactiva para restaurar el flujo
+      pvEsperaRestauracion = 7;  // Preset especial con el flujo original
+      pvCancelacion        = 8;  // DVC recibido, espera posicion inactiva
+      // Pasos con tiempo limite SegLimiteEsp
+      pvConTiempo = [pvEsperaEspecial, pvEsperaDisponible, pvAutorizaVenta,
+        pvEsperaRestauracion, pvCancelacion];
 
 type TMetodos = (NOTHING_e, INITIALIZE_e, PARAMETERS_e,
                  LOGIN_e, LOGOUT_e, PRICES_e, AUTHORIZE_e,
@@ -228,7 +296,7 @@ type TMetodos = (NOTHING_e, INITIALIZE_e, PARAMETERS_e,
                  STATUS_e, TOTALS_e, HALT_e, RUN_e, SHUTDOWN_e,
                  TERMINATE_e, STATE_e, TRACE_e, SAVELOGREQ_e,
                  RESPCMND_e, LOG_e, LOGREQ_e, EJECCMND_e, FLUSTD_e,
-                 FLUMIN_e);
+                 FLUMIN_e, FLUACT_e);
 
 
 
@@ -250,6 +318,12 @@ var
   TabCmnd  :array[1..200] of RegCmnd;
   LinEstadoGen  :string;
   Licencia3Ok  :Boolean;
+  // ---- Flujo TipoClb=5 ----
+  TAdicf       :array[1..MaximoDePosiciones,1..3] of integer;
+  StFlu,                 // 0 libre, 1/2 FLUSTD por enviar/enviado, 11/12 FLUMIN por enviar/enviado
+  PosFlu,
+  IntentosFlu  :integer;
+  FlujoPorVehiculo :Boolean;
 
 implementation
 
@@ -282,6 +356,9 @@ begin
     licencia:=config.ReadString('CONF','Licencia','');
     GSentinelKey:=licencia;
     ConfAdic:=config.ReadString('CONF','ConfAdic','');
+    TipoClb:=config.ReadString('CONF','TipoClb','1');
+    SwTipoClb5:=Copy(TipoClb,1,1)='5';
+    FlujoPorVehiculo:=UpperCase(config.ReadString('CONF','FlujoPorVehiculo',''))='SI';
     minutosLog:=StrToInt(config.ReadString('CONF','MinutosLog','0'));
     ListaCmnd:=TStringList.Create;
     ServerSocket1.Active:=True;
@@ -354,6 +431,8 @@ begin
               Socket.SendText('DISPENSERSX|FLUSTD|'+FluStd(parametro));
             FLUMIN_e:
               Socket.SendText('DISPENSERSX|FLUMIN|'+FluMin);
+            FLUACT_e:
+              Socket.SendText('DISPENSERSX|FLUACT|'+FluAct(parametro));
             RESPCMND_e:
               Socket.SendText('DISPENSERSX|RESPCMND|'+RespuestaComando(parametro));
           else
@@ -530,6 +609,7 @@ var
   consolas,dispensarios,productos: TlkJSONbase;
   i,productID: Integer;
   datosPuerto,json,variables,variable:string;
+  config:TIniFile;
 begin
   try
     if estado>-1 then begin
@@ -596,6 +676,17 @@ begin
 
     if Result<>'' then
       Exit;
+
+    // En TipoClb=5 la base de flujo por manguera se toma de ConfAdic
+    if SwTipoClb5 then begin
+      config:=TIniFile.Create(ExtractFilePath(ParamStr(0))+'PDISPENSARIOS.ini');
+      try
+        ConfAdic:=config.ReadString('CONF','ConfAdic','');
+      finally
+        config.Free;
+      end;
+      CargaFlujoBase(ConfAdic);
+    end;
 
     productos := js.Field['Products'];
 
@@ -723,6 +814,25 @@ begin
       finventa:=0;
       SwArosMag:=false;
       SwArosMag_stop:=false;
+      EspCancela:=EspPaso<>0;
+      EspPaso:=0;
+      EspResultado:=0;
+      EspIntentos:=0;
+      FluAct:=false;
+      FluActMang:=0;
+      FluActIntentos:=0;
+      swflujovehiculo:=false;
+      flujovehiculo:=0;
+      PasoPresetVehiculo:=pvLibre;
+      MangPresetVehiculo:=0;
+      CombPresetVehiculo:=0;
+      PesosPresetVehiculo:=0;
+      LitrosPresetVehiculo:=0;
+      for j:=1 to 3 do begin
+        TAdicf[i,j]:=0;
+        FluActPendiente[j]:=false;
+        FluActConfigurado[j]:=false;
+      end;
     end;
 
     for i:=0 to posiciones.Count-1 do begin
@@ -1306,6 +1416,7 @@ function TSQLWReader.Iniciar: string;
 var
   haspObj: OleVariant;
   haspPath, haspResult, haspMessage: string;
+  i: Integer;
 begin
   try
     if GSentinelKey <> '' then begin
@@ -1359,7 +1470,19 @@ begin
     Timer1.Enabled:=True;
     numPaso:=0;
 
-    if ConfAdic<>'' then
+    // Descarta comandos de flujo encolados antes del paro; los procesos pendientes los reenvian
+    ListaCmnd.Clear;
+    StFlu:=0;
+    PosFlu:=0;
+    IntentosFlu:=0;
+    for i:=1 to MaxPosCarga do with TPosCarga[i] do
+      if EspPaso<>0 then begin
+        EspPaso:=0;
+        EspResultado:=2;
+        EspCancela:=true;
+      end;
+
+    if SwTipoClb5 or (ConfAdic<>'') then
       FluStd(ConfAdic);
 
     Result:='True|';
@@ -1751,6 +1874,9 @@ begin
              end;
            end;
            SwReinicio:=false;
+           // Avanza los flujos TipoClb=5 con el estatus recien recibido
+           if SwTipoClb5 then
+             ProcesaFlujos;
            NumPaso:=2;
            if PosicionCargaActual>=MaxPosCarga then
              PosicionCargaActual:=0;
@@ -2068,8 +2194,11 @@ begin
         rsp:='';
         ss:=ExtraeElemStrSep(TabCmnd[xcmnd].Comando,1,' ');
         AgregaLog(TabCmnd[xcmnd].Comando);
+        // PRESET CON FLUJO TipoClb=5: espera, rechazo o flujo por vehiculo
+        if ((ss='OCC')or(ss='OCL')) and AtiendeOCCFlujo(xcmnd,rsp) then begin
+        end
         // CMND: CERRAR CONSOLA
-        if ss='CERRAR' then begin
+        else if ss='CERRAR' then begin
           rsp:='OK';
           SwCerrar:=true;
         end
@@ -2248,7 +2377,9 @@ begin
           rsp:='OK';
           xpos:=strtointdef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '),0);
           if xpos in [1..MaxPosCarga] then begin
-            if (TPosCarga[xpos].estatus in [2,9]) then begin
+            if TPosCarga[xpos].PasoPresetVehiculo<>pvLibre then
+              CancelaPresetVehiculo(xpos)
+            else if (TPosCarga[xpos].estatus in [2,9]) then begin
               ComandoConsola('E'+IntToClaveNum(xpos,2));
               esperamiliseg(500);
               TPosCarga[xpos].SwParado:=true;
@@ -2303,6 +2434,25 @@ begin
             end;
           end;
         end
+        else if SwTipoClb5 and ((ss='FLUSTD')or(ss='FLUMIN')) then begin
+          if StFlu>0 then
+            rsp:='Comandos Flu en proceso'
+          else begin
+            rsp:='OK';
+            if ss='FLUSTD' then
+              StFlu:=1
+            else
+              StFlu:=11;
+            PosFlu:=0;
+            IntentosFlu:=0;
+          end;
+        end
+        else if ss='FLUACT' then begin
+          rsp:='OK';
+          for xpos:=1 to MaxPosCarga do
+            if TPosCarga[xpos].NoComb>0 then
+              TPosCarga[xpos].FluAct:=True;
+        end
         else if ss='FLUSTD' then begin
           if Licencia3Ok then begin
             for xpos:=1 to MaxPosCarga do begin
@@ -2331,7 +2481,20 @@ begin
             TPosCarga[xpos].swAdic:=0;
           rsp:='OK';
         end
+        else if SwTipoClb5 and (ss='ESTADI') then begin
+          sumAdi:=0;
+          for xpos:=1 to MaxPosCarga do
+            if TPosCarga[xpos].FluAct or (TPosCarga[xpos].FluActMang<>0) then
+              inc(sumAdi);
+          if (StFlu=0) and (sumAdi=0) then begin
+            rsp:='OK';
+            GuardarLog;
+          end
+          else
+            rsp:='Comandos en proceso';
+        end
         else if ss='ESTADI' then begin
+          sumAdi:=0;
           for xpos:=1 to MaxPosCarga do
             sumAdi:=sumAdi+TPosCarga[xpos].swAdic;
 
@@ -2454,12 +2617,9 @@ end;
 
 procedure TSQLWReader.EnviaPreset(xcomb: integer;
   var rsp: string);
-var ss,sval:string;
-    i,ndig,xpos,nc:integer;
+var xpos:integer;
     swlitros:boolean;
 begin
-  if SoportaSeleccionProducto<>'Si' then
-    xcomb:=0;
   swlitros:=SnLitros>0.01;
   if not (SnPosCarga in [1..MaxPosCarga]) then
     exit;
@@ -2477,25 +2637,41 @@ begin
     ComandoConsola('E'+IntToClaveNum(xpos,2));
     esperamiliseg(300);
   end;
-  ss:='s'+IntToClaveNum(SnPosCarga,2);
-  if not swlitros then begin // pesos
+  if swlitros then
+    ComandoConsola(ArmaPreset(xpos,0,SnLitros,xcomb))
+  else begin
     TPosCarga[xpos].importe_aros:=SnImporte;
+    ComandoConsola(ArmaPreset(xpos,SnImporte,0,xcomb));
+  end;
+end;
+
+// Arma el comando de preset "s": en litros si xlitros>0.01, de lo contrario en pesos
+function TSQLWReader.ArmaPreset(xpos:integer;ximporte,xlitros:real;
+  xcomb:integer):string;
+var ss,sval:string;
+    i,ndig,nc:integer;
+begin
+  if SoportaSeleccionProducto<>'Si' then
+    xcomb:=0;
+  sval:='';
+  ss:='s'+IntToClaveNum(xpos,2);
+  if xlitros<=0.01 then begin // pesos
     ss:=ss+'0';
-    ss:=ss+IntToStr(TPosCarga[SnPosCarga].TPrec[1]);   // 1-contado 0,2-credito
+    ss:=ss+IntToStr(TPosCarga[xpos].TPrec[1]);   // 1-contado 0,2-credito
     if DecimalesPresetWayne=0 then
-      sval:=FiltraStrNum(FormatFloat('00000000',SnImporte))
+      sval:=FiltraStrNum(FormatFloat('00000000',ximporte))
     else if DecimalesPresetWayne=1 then
-      sval:=FiltraStrNum(FormatFloat('0000000.0',SnImporte))
+      sval:=FiltraStrNum(FormatFloat('0000000.0',ximporte))
     else if DecimalesPresetWayne=2 then
-      sval:=FiltraStrNum(FormatFloat('000000.00',SnImporte))
+      sval:=FiltraStrNum(FormatFloat('000000.00',ximporte))
     else if DecimalesPresetWayne=3 then
-      sval:=FiltraStrNum(FormatFloat('00000.000',SnImporte))
+      sval:=FiltraStrNum(FormatFloat('00000.000',ximporte))
     else begin
-      sval:=FiltraStrNum(FormatFloat('000000.00',SnImporte));
-      if TPosCarga[SnPosCarga].tdigpreset[1]>=0 then
-        ndig:=TPosCarga[SnPosCarga].tdigpreset[1]
+      sval:=FiltraStrNum(FormatFloat('000000.00',ximporte));
+      if TPosCarga[xpos].tdigpreset[1]>=0 then
+        ndig:=TPosCarga[xpos].tdigpreset[1]
       else
-        ndig:=TPosCarga[SnPosCarga].tdiga[1];
+        ndig:=TPosCarga[xpos].tdiga[1];
       if ndig>0 then begin
         sval:=IntToClaveNum(0,ndig)+sval;
         sval:=copy(sval,1,8);
@@ -2505,17 +2681,17 @@ begin
   end
   else begin // litros
     ss:=ss+'1';
-    ss:=ss+IntToStr(TPosCarga[SnPosCarga].TPrec[1]);   // 1-contado 0,2-credito
+    ss:=ss+IntToStr(TPosCarga[xpos].TPrec[1]);   // 1-contado 0,2-credito
     case DecimalesPresetWayneLitros of
-      1:sval:=FiltraStrNum(FormatFloat('0000000.0',SnLitros)); //saux:='0000000.0';
-      2:sval:=FiltraStrNum(FormatFloat('000000.00',SnLitros)); //saux:='000000.00';
-      3:sval:=FiltraStrNum(FormatFloat('00000.000',SnLitros)); //saux:='00000.000';
-      4:sval:=FiltraStrNum(FormatFloat('0000.0000',SnLitros)); //saux:='0000.0000';
+      1:sval:=FiltraStrNum(FormatFloat('0000000.0',xlitros)); //saux:='0000000.0';
+      2:sval:=FiltraStrNum(FormatFloat('000000.00',xlitros)); //saux:='000000.00';
+      3:sval:=FiltraStrNum(FormatFloat('00000.000',xlitros)); //saux:='00000.000';
+      4:sval:=FiltraStrNum(FormatFloat('0000.0000',xlitros)); //saux:='0000.0000';
     end;
     ss:=ss+sval;
   end;
   if xcomb>0 then begin
-    nc:=TPosCarga[SnPosCarga].NoComb;
+    nc:=TPosCarga[xpos].NoComb;
     i:=0;
     repeat
       inc(i);
@@ -2527,7 +2703,7 @@ begin
   end
   else
     ss:=ss+'0'+'0';
-  ComandoConsola(ss);
+  Result:=ss;
 end;
 
 function TSQLWReader.MangueraEnPosicion(xpos,
@@ -2649,6 +2825,13 @@ var
 begin
   if Licencia3Ok then begin
     try
+      // En TipoClb=5 FLUSTD solo activa el flujo; ConfAdic se actualiza con FLUACT
+      if SwTipoClb5 then begin
+        AgregaLog('FLUSTD TipoClb='+TipoClb);
+        Result:='True|'+IntToStr(EjecutaComando('FLUSTD'))+'|';
+        Exit;
+      end;
+
       AgregaLog('MensajeX: '+msj);
 
       config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
@@ -2671,6 +2854,739 @@ begin
   end
   else
     Result:='False|Licencia CVL7 invalida|';
+end;
+
+function TSQLWReader.FluAct(msj: string): string;
+var
+  i,j,k,xpos,xmang,porcentaje:Integer;
+  porComb:array[1..2] of Integer;   // 1 = gasolina, 2 = diesel
+  elemento,mangueras,valor:string;
+  existe:Boolean;
+begin
+  if not Licencia3Ok then begin
+    Result:='False|Licencia CVL7 invalida|';
+    Exit;
+  end;
+  if not SwTipoClb5 then begin
+    Result:='False|FLUACT solo disponible para TipoClb=5|';
+    Exit;
+  end;
+  try
+    AgregaLog('TipoClb: '+TipoClb+', Mensaje FLUACT: '+msj);
+    if Trim(msj)='' then
+      raise Exception.Create('Favor de indicar posiciones y porcentajes');
+    if Pos(':',msj)=0 then begin
+      // Por combustible: gasolina;diesel. Gasolina = combustibles 1 y 2, diesel = combustible 3
+      if NoElemStrSep(msj,';')>2 then
+        raise Exception.Create('FLUACT requiere porcentaje de gasolina y diesel (gasolina;diesel)');
+      porComb[1]:=-1;
+      porComb[2]:=-1;
+      for j:=1 to NoElemStrSep(msj,';') do begin
+        valor:=Trim(ExtraeElemStrSep(msj,j,';'));
+        if valor='' then Continue;   // combustible omitido conserva su porcentaje
+        porcentaje:=StrToIntDef(valor,-1);
+        if (Length(valor)<>1) or (porcentaje<0) or (porcentaje>9) then
+          raise Exception.Create('Porcentaje FLUACT debe ser un digito de 0 a 9');
+        porComb[j]:=porcentaje;
+      end;
+      AgregaLog('FLUACT Gasolina: '+IntToStr(porComb[1])+', Diesel: '+IntToStr(porComb[2]));
+      for xpos:=1 to MaxPosCarga do
+        with TPosCarga[xpos] do begin
+          if NoComb=0 then Continue;
+          for k:=1 to NoComb do begin
+            xmang:=TMang[k];
+            if not (xmang in [1..3]) then Continue;
+            if TComb[k]=3 then
+              porcentaje:=porComb[2]
+            else
+              porcentaje:=porComb[1];
+            if porcentaje<0 then Continue;
+            TAdicf[xpos,xmang]:=porcentaje;
+            FluActPendiente[xmang]:=True;
+            FluActConfigurado[xmang]:=True;
+          end;
+          AgregaLog('Pos: '+IntToStr(xpos)+' Flu1: '+IntToStr(TAdicf[xpos,1])+', Flu2: '+
+            IntToStr(TAdicf[xpos,2])+', Flu3: '+IntToStr(TAdicf[xpos,3]));
+        end;
+      GuardaFlujoBase;
+      Result:='True|'+IntToStr(EjecutaComando('FLUACT'))+'|';
+      Exit;
+    end;
+    // Por posicion: valida todo el mensaje antes de modificar la configuracion en uso
+    for i:=1 to NoElemStrSep(msj,';') do begin
+      elemento:=Trim(ExtraeElemStrSep(msj,i,';'));
+      if elemento='' then Continue;
+      xpos:=StrToIntDef(Trim(ExtraeElemStrSep(elemento,1,':')),-1);
+      if (xpos<1) or (xpos>MaximoDePosiciones) then
+        raise Exception.Create('Posicion FLUACT no valida en ['+elemento+']');
+      mangueras:=ExtraeElemStrSep(elemento,2,':');
+      if (Trim(mangueras)='') or (NoElemStrSep(mangueras,',')>3) then
+        raise Exception.Create('FLUACT requiere de 1 a 3 mangueras');
+      for j:=1 to 3 do begin
+        valor:=Trim(ExtraeElemStrSep(mangueras,j,','));
+        if valor<>'' then begin
+          porcentaje:=StrToIntDef(valor,-1);
+          if (Length(valor)<>1) or (porcentaje<0) or (porcentaje>9) then
+            raise Exception.Create('Porcentaje FLUACT debe ser un digito de 0 a 9');
+        end;
+      end;
+    end;
+    for i:=1 to NoElemStrSep(msj,';') do begin
+      elemento:=Trim(ExtraeElemStrSep(msj,i,';'));
+      if elemento='' then Continue;
+      xpos:=StrToInt(Trim(ExtraeElemStrSep(elemento,1,':')));
+      // Solo posiciones registradas en INITIALIZE
+      if (xpos>MaxPosCarga) or (TPosCarga[xpos].NoComb=0) then begin
+        AgregaLog('FLUACT ignora posicion no registrada en INITIALIZE: '+IntToStr(xpos));
+        Continue;
+      end;
+      mangueras:=ExtraeElemStrSep(elemento,2,':');
+      with TPosCarga[xpos] do
+        for j:=1 to 3 do begin
+          valor:=Trim(ExtraeElemStrSep(mangueras,j,','));
+          if valor='' then Continue;   // manguera omitida conserva su porcentaje
+          existe:=false;
+          for k:=1 to NoComb do
+            if TMang[k]=j then
+              existe:=true;
+          if not existe then begin
+            AgregaLog('FLUACT ignora manguera inexistente Pos: '+IntToStr(xpos)+' Manguera: '+IntToStr(j));
+            Continue;
+          end;
+          TAdicf[xpos,j]:=StrToInt(valor);
+          FluActPendiente[j]:=True;
+          FluActConfigurado[j]:=True;
+        end;
+      AgregaLog('Flu1: '+IntToStr(TAdicf[xpos,1])+', Flu2: '+IntToStr(TAdicf[xpos,2])+
+        ', Flu3: '+IntToStr(TAdicf[xpos,3]));
+    end;
+    GuardaFlujoBase;
+    Result:='True|'+IntToStr(EjecutaComando('FLUACT'))+'|';
+  except
+    on e:Exception do begin
+      AgregaLog('Error FLUACT: '+e.Message);
+      Result:='False|Error FLUACT: '+e.Message+'|';
+    end;
+  end;
+end;
+
+procedure TSQLWReader.CargaFlujoBase(const texto: string);
+var
+  valores:array[1..MaximoDePosiciones,1..3] of Integer; // -1 = sin valor
+  porComb:array[1..2] of Integer;                       // 1 = gasolina, 2 = diesel
+  xpos,xmang,i,j,cantidad,porcentaje:integer;
+  elemento,mangueras,valor:string;
+begin
+  for xpos:=1 to MaximoDePosiciones do
+    for j:=1 to 3 do
+      valores[xpos,j]:=-1;
+  if Trim(texto)='' then
+    raise Exception.Create('ConfAdic no contiene porcentajes para TipoClb=5');
+
+  if Pos(':',texto)>0 then begin
+    // Por posicion: pos:m1,m2,m3;pos:m1,m2,m3 (el indice es el numero de manguera)
+    for i:=1 to NoElemStrSep(texto,';') do begin
+      elemento:=Trim(ExtraeElemStrSep(texto,i,';'));
+      if elemento='' then Continue;
+      xpos:=StrToIntDef(Trim(ExtraeElemStrSep(elemento,1,':')),-1);
+      if (xpos<1) or (xpos>MaximoDePosiciones) then
+        raise Exception.Create('ConfAdic: posicion no valida en ['+elemento+']');
+      if (xpos>MaxPosCarga) or (TPosCarga[xpos].NoComb=0) then begin
+        AgregaLog('ConfAdic FLUACT ignora posicion no registrada en INITIALIZE: '+IntToStr(xpos));
+        Continue;
+      end;
+      mangueras:=ExtraeElemStrSep(elemento,2,':');
+      cantidad:=NoElemStrSep(mangueras,',');
+      if (Trim(mangueras)='') or (cantidad>3) then
+        raise Exception.Create('ConfAdic requiere de 1 a 3 porcentajes Pos: '+IntToStr(xpos));
+      for j:=1 to cantidad do begin
+        valor:=Trim(ExtraeElemStrSep(mangueras,j,','));
+        if valor='' then Continue;   // manguera sin porcentaje
+        porcentaje:=StrToIntDef(valor,-1);
+        if (Length(valor)<>1) or (porcentaje<0) or (porcentaje>9) then
+          raise Exception.Create('ConfAdic: porcentaje no valido Pos: '+IntToStr(xpos)+
+            ' Manguera: '+IntToStr(j));
+        valores[xpos,j]:=porcentaje;
+      end;
+    end;
+  end
+  else begin
+    // Por combustible: gasolina;diesel. Gasolina = combustibles 1 y 2, diesel = combustible 3
+    cantidad:=NoElemStrSep(texto,';');
+    if cantidad>2 then
+      raise Exception.Create('ConfAdic requiere porcentaje de gasolina y diesel (gasolina;diesel)');
+    porComb[1]:=-1;
+    porComb[2]:=-1;
+    for j:=1 to cantidad do begin
+      valor:=Trim(ExtraeElemStrSep(texto,j,';'));
+      if valor='' then Continue;   // combustible sin porcentaje
+      porcentaje:=StrToIntDef(valor,-1);
+      if (Length(valor)<>1) or (porcentaje<0) or (porcentaje>9) then begin
+        if j=1 then
+          raise Exception.Create('ConfAdic: porcentaje no valido para gasolina')
+        else
+          raise Exception.Create('ConfAdic: porcentaje no valido para diesel');
+      end;
+      porComb[j]:=porcentaje;
+    end;
+    for xpos:=1 to MaxPosCarga do
+      with TPosCarga[xpos] do
+        for i:=1 to NoComb do
+          if TMang[i] in [1..3] then begin
+            if TComb[i]=3 then
+              valores[xpos,TMang[i]]:=porComb[2]
+            else
+              valores[xpos,TMang[i]]:=porComb[1];
+          end;
+  end;
+
+  // Toda manguera inicializada debe tener porcentaje antes de aplicar cualquier valor
+  for xpos:=1 to MaxPosCarga do
+    for i:=1 to TPosCarga[xpos].NoComb do begin
+      xmang:=TPosCarga[xpos].TMang[i];
+      if not (xmang in [1..3]) then
+        raise Exception.Create('Manguera no valida para FLUACT Pos: '+IntToStr(xpos));
+      if valores[xpos,xmang]<0 then
+        raise Exception.Create('Falta porcentaje en ConfAdic Pos: '+IntToStr(xpos)+
+          ' Manguera: '+IntToStr(xmang));
+    end;
+
+  for xpos:=1 to MaxPosCarga do
+    with TPosCarga[xpos] do begin
+      for xmang:=1 to 3 do begin
+        TAdicf[xpos,xmang]:=0;
+        FluActConfigurado[xmang]:=False;
+      end;
+      for i:=1 to NoComb do begin
+        xmang:=TMang[i];
+        TAdicf[xpos,xmang]:=valores[xpos,xmang];
+        FluActConfigurado[xmang]:=True;
+        AgregaLog('Base FLUACT cargada en memoria desde ConfAdic Pos: '+IntToStr(xpos)+
+          ' Manguera: '+IntToStr(xmang)+' Porcentaje: '+IntToStr(valores[xpos,xmang]));
+      end;
+    end;
+end;
+
+procedure TSQLWReader.GuardaFlujoBase;
+var
+  config:TIniFile;
+  xpos,xmang,i,maxMang,c:integer;
+  porComb:array[1..2] of Integer;   // 1 = gasolina, 2 = diesel
+  uniforme:Boolean;
+  texto,mangueras:string;
+begin
+  porComb[1]:=-1;
+  porComb[2]:=-1;
+  uniforme:=true;
+  for xpos:=1 to MaxPosCarga do
+    with TPosCarga[xpos] do
+      for i:=1 to NoComb do begin
+        if (not (TMang[i] in [1..3])) or (not FluActConfigurado[TMang[i]]) then begin
+          AgregaLog('ConfAdic no se actualiza, falta porcentaje Pos: '+IntToStr(xpos)+
+            ' Manguera: '+IntToStr(TMang[i]));
+          Exit;
+        end;
+        if TComb[i]=3 then c:=2 else c:=1;
+        if porComb[c]<0 then
+          porComb[c]:=TAdicf[xpos,TMang[i]]
+        else if porComb[c]<>TAdicf[xpos,TMang[i]] then
+          uniforme:=false;
+      end;
+
+  texto:='';
+  if uniforme then begin
+    // Por combustible: gasolina;diesel (vacio = combustible inexistente)
+    if porComb[1]>=0 then
+      texto:=IntToStr(porComb[1]);
+    if porComb[2]>=0 then
+      texto:=texto+';'+IntToStr(porComb[2]);
+  end
+  else for xpos:=1 to MaxPosCarga do
+    // Por posicion: pos:m1,m2,m3 (vacio = manguera inexistente)
+    with TPosCarga[xpos] do begin
+      if NoComb=0 then Continue;
+      maxMang:=0;
+      for i:=1 to NoComb do
+        if TMang[i]>maxMang then
+          maxMang:=TMang[i];
+      mangueras:='';
+      for xmang:=1 to maxMang do begin
+        if xmang>1 then
+          mangueras:=mangueras+',';
+        for i:=1 to NoComb do
+          if TMang[i]=xmang then begin
+            mangueras:=mangueras+IntToStr(TAdicf[xpos,xmang]);
+            Break;
+          end;
+      end;
+      if texto<>'' then
+        texto:=texto+';';
+      texto:=texto+IntToStr(xpos)+':'+mangueras;
+    end;
+  if texto='' then
+    Exit;
+
+  config:=TIniFile.Create(ExtractFilePath(ParamStr(0))+'PDISPENSARIOS.ini');
+  try
+    config.WriteString('CONF','ConfAdic',texto);
+  finally
+    config.Free;
+  end;
+  ConfAdic:=texto;
+  AgregaLog('ConfAdic actualizado desde FLUACT: '+texto);
+end;
+
+// Los comandos de flujo se envian en cola, uno por cada respuesta de la consola
+procedure TSQLWReader.EncolaComando(ss: string);
+begin
+  ListaCmnd.Add(ss);
+end;
+
+// Preset especial: se envia, y al verse autorizado se cancela con "E"
+procedure TSQLWReader.IniciaEspecial(xpos: integer; xvalor: real);
+begin
+  with TPosCarga[xpos] do begin
+    EspValor:=xvalor;
+    EspPaso:=1;
+    EspResultado:=0;
+    EspIntentos:=0;
+    EspHora:=Now;
+  end;
+  EnviaEspecial(xpos);
+end;
+
+// Decimales del importe que ArmaPreset descarta segun DecimalesPresetWayne y el digito de ajuste
+function TSQLWReader.DecimalesPerdidosPreset(xpos: integer): integer;
+begin
+  case DecimalesPresetWayne of
+    0:Result:=2;
+    1:Result:=1;
+    2,3:Result:=0;
+  else
+    if TPosCarga[xpos].tdigpreset[1]>=0 then
+      Result:=TPosCarga[xpos].tdigpreset[1]
+    else
+      Result:=TPosCarga[xpos].tdiga[1];
+    if Result<0 then
+      Result:=0;
+  end;
+end;
+
+procedure TSQLWReader.EnviaEspecial(xpos: integer);
+var
+  perdidos:integer;
+begin
+  with TPosCarga[xpos] do begin
+    inc(EspIntentos);
+    EspHoraCmnd:=Now;
+    perdidos:=DecimalesPerdidosPreset(xpos);
+    if perdidos>0 then
+      AgregaLog('Advertencia preset especial Posicion '+IntToClaveNum(xpos,2)+': DecimalesPresetWayne='+
+        IntToStr(DecimalesPresetWayne)+' y digito de ajuste de preset descartan '+IntToStr(perdidos)+
+        ' decimal(es) de $'+FormatFloat('0.00',EspValor)+'; el modulo puede no reconocer el valor y '+
+        'el resultado se reporta solo por la autorizacion de la posicion');
+    AgregaLog('Preset especial Posicion '+IntToClaveNum(xpos,2)+' $'+FormatFloat('0.00',EspValor)+
+      ' Intento '+IntToStr(EspIntentos));
+    EncolaComando(ArmaPreset(xpos,EspValor,0,0));
+  end;
+end;
+
+procedure TSQLWReader.TerminaEspecial(xpos: integer; xok: boolean);
+begin
+  with TPosCarga[xpos] do begin
+    EspPaso:=0;
+    if xok then begin
+      EspResultado:=1;
+      AgregaLog('Preset especial aplicado Posicion '+IntToClaveNum(xpos,2)+' $'+FormatFloat('0.00',EspValor));
+    end
+    else begin
+      EspResultado:=2;
+      AgregaLog('Error preset especial Posicion '+IntToClaveNum(xpos,2)+' $'+FormatFloat('0.00',EspValor)+
+        ' Estatus: '+IntToStr(estatus));
+    end;
+  end;
+end;
+
+procedure TSQLWReader.ProcesaEspecial(xpos: integer);
+begin
+  with TPosCarga[xpos] do begin
+    if SecondsBetween(Now,EspHora)>=SegLimiteEsp then begin
+      if estatus in [2,9] then begin
+        EncolaComando('E'+IntToClaveNum(xpos,2));
+        SwParado:=true;
+      end;
+      TerminaEspecial(xpos,false);
+      Exit;
+    end;
+    case EspPaso of
+      1:if estatus in [2,8,9] then begin
+          // La posicion recibio el preset; se cancela la autorizacion
+          EncolaComando('E'+IntToClaveNum(xpos,2));
+          SwParado:=true;
+          EspPaso:=2;
+          EspHoraCmnd:=Now;
+        end
+        else if (estatus in [1,5]) and (SecondsBetween(Now,EspHoraCmnd)>=SegReintentoEsp) then begin
+          if EspIntentos>=MaxIntentosEsp then
+            TerminaEspecial(xpos,false)
+          else
+            EnviaEspecial(xpos);
+        end;
+      2:if not (estatus in [2,9]) then
+          TerminaEspecial(xpos,true)
+        else if SecondsBetween(Now,EspHoraCmnd)>=SegReintentoEsp then begin
+          EncolaComando('E'+IntToClaveNum(xpos,2));
+          EspHoraCmnd:=Now;
+        end;
+    end;
+  end;
+end;
+
+// Resuelve OCC/OCL en TipoClb=5. Regresa True si el comando fue atendido aqui:
+// se pospone mientras hay preset especial, se rechaza durante flujo por vehiculo
+// o inicia el flujo por vehiculo cuando la cantidad trae 5 decimales.
+function TSQLWReader.AtiendeOCCFlujo(xcmnd: integer; var rsp: string): boolean;
+var
+  xpos,xcomb,xflujo:integer;
+  cantidad,decimales:string;
+  xvalor,xpesos,xlitros:real;
+  swlitros:boolean;
+begin
+  Result:=false;
+  if not SwTipoClb5 then
+    Exit;
+  with TabCmnd[xcmnd] do begin
+    xpos:=StrToIntDef(ExtraeElemStrSep(Comando,2,' '),0);
+    if not (xpos in [1..MaxPosCarga]) then
+      Exit;
+    if TPosCarga[xpos].SwOCC then
+      Exit;
+    if TPosCarga[xpos].PasoPresetVehiculo<>pvLibre then begin
+      rsp:='Posicion de Carga no Disponible';
+      Result:=true;
+      Exit;
+    end;
+    if (TPosCarga[xpos].EspPaso<>0) or (TPosCarga[xpos].FluActMang<>0) then begin
+      SwAplicaCmnd:=false;
+      Result:=true;
+      Exit;
+    end;
+    cantidad:=ExtraeElemStrSep(Comando,3,' ');
+    decimales:=ExtraeElemStrSep(cantidad,2,'.');
+    if not (FlujoPorVehiculo and (Length(decimales)=5)) then
+      Exit;
+    Result:=true;
+    swlitros:=ExtraeElemStrSep(Comando,1,' ')='OCL';
+    with TPosCarga[xpos] do begin
+      if not (estatus in [1,5]) then begin
+        rsp:='Posicion de Carga no Disponible';
+        Exit;
+      end;
+      if SwDesHabilitado then begin
+        rsp:='Posicion Deshabilitada';
+        Exit;
+      end;
+      // Decimales: 2 de la cantidad y 3 del flujo; el 3er decimal es el flujo (123 = flujo 0)
+      if Copy(decimales,3,3)='123' then
+        xflujo:=0
+      else
+        xflujo:=StrToIntDef(decimales[3],0);
+      xvalor:=StrToFloatDef(Copy(cantidad,1,Length(cantidad)-3),-1);
+      xpesos:=0;
+      xlitros:=0;
+      if swlitros then begin
+        rsp:=ValidaCifra(xvalor,4,2);
+        if (rsp='OK') and (xvalor<0.1) then
+          rsp:='Valor minimo permitido: 0.1 lts';
+        xlitros:=xvalor;
+      end
+      else begin
+        rsp:=ValidaCifra(xvalor,5,2);
+        if (rsp='OK') and (xvalor<0.01) then
+          xvalor:=99999;
+        xpesos:=xvalor;
+      end;
+      if rsp<>'OK' then
+        Exit;
+      xcomb:=StrToIntDef(ExtraeElemStrSep(Comando,4,' '),0);
+      tipopago:=StrToIntDef(ExtraeElemStrSep(Comando,5,' '),0);
+      finventa:=StrToIntDef(ExtraeElemStrSep(Comando,6,' '),0);
+      swarosmag:=false;
+      rsp:=IniciaPresetVehiculo(xpos,xcomb,xflujo,xpesos,xlitros);
+    end;
+  end;
+end;
+
+function TSQLWReader.IniciaPresetVehiculo(xpos, xcomb, xflujo: integer;
+  xpesos, xlitros: real): string;
+var
+  i,k,xmang:integer;
+begin
+  Result:='OK';
+  with TPosCarga[xpos] do begin
+    k:=0;
+    for i:=1 to NoComb do
+      if TComb[i]=xcomb then
+        k:=i;
+    if k=0 then begin
+      Result:='Combustible no existe en esta posicion';
+      Exit;
+    end;
+    xmang:=TMang[k];
+    if not (xmang in [1..3]) then begin
+      Result:='Manguera no valida para flujo por vehiculo';
+      Exit;
+    end;
+    if not FluActConfigurado[xmang] then begin
+      Result:='Falta porcentaje de flujo en ConfAdic para esta manguera';
+      Exit;
+    end;
+    swflujovehiculo:=true;
+    flujovehiculo:=xflujo;
+    MangPresetVehiculo:=xmang;
+    CombPresetVehiculo:=xcomb;
+    PesosPresetVehiculo:=xpesos;
+    LitrosPresetVehiculo:=xlitros;
+    ValorFlujoOriginal:=(80000+xpos*100+xmang*10+TAdicf[xpos,xmang])/100;
+    AgregaLog('Flujo vehiculo Pos: '+IntToStr(xpos)+' Manguera: '+IntToStr(xmang)+
+      ' Flujo: '+IntToStr(xflujo)+' Flujo original: '+FormatFloat('0.00',ValorFlujoOriginal));
+    IniciaEspecial(xpos,(80000+xpos*100+xmang*10+xflujo)/100);
+    PasoPresetVehiculo:=pvEsperaEspecial;
+    HoraPresetVehiculo:=Now;
+  end;
+end;
+
+procedure TSQLWReader.CancelaPresetVehiculo(xpos: integer);
+begin
+  with TPosCarga[xpos] do begin
+    // La restauracion del flujo original no se interrumpe
+    if PasoPresetVehiculo in [pvRestaura,pvEsperaRestauracion] then begin
+      AgregaLog('DVC con restauracion de flujo en proceso Pos: '+IntToStr(xpos));
+      Exit;
+    end;
+    if PasoPresetVehiculo=pvEsperaEspecial then
+      EspPaso:=0;
+    PasoPresetVehiculo:=pvCancelacion;
+    HoraPresetVehiculo:=Now;
+    HoraCmndVehiculo:=Now;
+    if estatus in [2,9] then begin
+      EncolaComando('E'+IntToClaveNum(xpos,2));
+      SwParado:=true;
+      if estatus=9 then
+        tipopago:=0;
+    end;
+    AgregaLog('Flujo vehiculo cancelado; restauracion pendiente Pos: '+IntToStr(xpos));
+  end;
+end;
+
+procedure TSQLWReader.ProcesaPresetVehiculo(xpos: integer);
+var
+  pasoAnterior:integer;
+begin
+  with TPosCarga[xpos] do begin
+    if PasoPresetVehiculo in [pvLibre,pvError] then
+      Exit;
+    if (PasoPresetVehiculo in pvConTiempo) and
+       (SecondsBetween(Now,HoraPresetVehiculo)>=SegLimiteEsp) then begin
+      PasoPresetVehiculo:=pvError;
+      EspPaso:=0;
+      if estatus in [2,9] then begin
+        EncolaComando('E'+IntToClaveNum(xpos,2));
+        SwParado:=true;
+      end;
+      AgregaLog('Error flujo vehiculo Pos: '+IntToStr(xpos)+
+        ': tiempo agotado en secuencia de venta/restauracion, requiere DVC');
+      Exit;
+    end;
+    pasoAnterior:=PasoPresetVehiculo;
+    case PasoPresetVehiculo of
+      pvEsperaEspecial:
+        if EspPaso=0 then begin
+          if EspResultado=1 then
+            PasoPresetVehiculo:=pvEsperaDisponible
+          else begin
+            AgregaLog('No se aplico flujo vehiculo Pos: '+IntToStr(xpos)+'; se restaura flujo original');
+            PasoPresetVehiculo:=pvRestaura;
+          end;
+        end;
+      pvEsperaDisponible:
+        if (estatus in [1,5]) and (not SwDesHabilitado) then begin
+          IntentosPresetVehiculo:=0;
+          PasoPresetVehiculo:=pvAutorizaVenta;
+        end;
+      pvCancelacion:
+        if estatus=1 then
+          PasoPresetVehiculo:=pvRestaura
+        else if (estatus in [2,9]) and (SecondsBetween(Now,HoraCmndVehiculo)>=SegReintentoEsp) then begin
+          EncolaComando('E'+IntToClaveNum(xpos,2));
+          SwParado:=true;
+          HoraCmndVehiculo:=Now;
+        end;
+      pvVenta:
+        if (estatus=1) and (not swcargando) then begin
+          AgregaLog('Restauracion de flujo pendiente Pos: '+IntToStr(xpos));
+          PasoPresetVehiculo:=pvRestaura;
+        end;
+      pvEsperaRestauracion:
+        if EspPaso=0 then begin
+          if EspResultado=1 then begin
+            AgregaLog('Flujo original restaurado Pos: '+IntToStr(xpos)+
+              ' Valor: '+FormatFloat('0.00',ValorFlujoOriginal));
+            swflujovehiculo:=false;
+            PasoPresetVehiculo:=pvLibre;
+          end
+          else begin
+            AgregaLog('Error flujo vehiculo Pos: '+IntToStr(xpos)+
+              ': no se restauro el flujo original, requiere DVC');
+            PasoPresetVehiculo:=pvError;
+          end;
+        end;
+    end;
+    // Pasos que envian comando con el estatus ya evaluado en este ciclo
+    case PasoPresetVehiculo of
+      pvAutorizaVenta:
+        if estatus in [2,8,9] then begin
+          AgregaLog('Preset real flujo vehiculo autorizado Pos: '+IntToStr(xpos));
+          PasoPresetVehiculo:=pvVenta;
+        end
+        else if (estatus in [1,5]) and
+                ((IntentosPresetVehiculo=0) or (SecondsBetween(Now,HoraCmndVehiculo)>=SegReintentoEsp)) then begin
+          if IntentosPresetVehiculo>=MaxIntentosEsp then begin
+            AgregaLog('No se autorizo preset real flujo vehiculo Pos: '+IntToStr(xpos)+
+              '; se restaura flujo original');
+            PasoPresetVehiculo:=pvRestaura;
+          end
+          else begin
+            inc(IntentosPresetVehiculo);
+            HoraCmndVehiculo:=Now;
+            AgregaLog('Preset real flujo vehiculo Pos: '+IntToStr(xpos)+
+              ' Pesos: '+FormatFloat('0.00',PesosPresetVehiculo)+
+              ' Litros: '+FormatFloat('0.00',LitrosPresetVehiculo));
+            if PesosPresetVehiculo>0 then
+              importe_aros:=PesosPresetVehiculo;
+            EncolaComando(ArmaPreset(xpos,PesosPresetVehiculo,LitrosPresetVehiculo,CombPresetVehiculo));
+          end;
+        end;
+    end;
+    if (PasoPresetVehiculo=pvRestaura) and (estatus=1) and (EspPaso=0) then begin
+      IniciaEspecial(xpos,ValorFlujoOriginal);
+      PasoPresetVehiculo:=pvEsperaRestauracion;
+    end;
+    if PasoPresetVehiculo<>pasoAnterior then
+      HoraPresetVehiculo:=Now;
+  end;
+end;
+
+procedure TSQLWReader.ProcesaFluAct(xpos: integer);
+var
+  xmang:integer;
+begin
+  with TPosCarga[xpos] do begin
+    if not FluAct then
+      Exit;
+    // Resultado de la manguera en proceso
+    if FluActMang<>0 then begin
+      if EspPaso<>0 then
+        Exit;
+      if EspResultado=1 then begin
+        AgregaLog('FLUACT aplicado Pos: '+IntToStr(xpos)+' Manguera: '+IntToStr(FluActMang));
+        // Si otro FLUACT cambio el porcentaje durante el envio, la manguera queda pendiente
+        if Round(EspValor*100)=80000+xpos*100+FluActMang*10+TAdicf[xpos,FluActMang] then
+          FluActPendiente[FluActMang]:=false;
+        FluActIntentos:=0;
+      end
+      else begin
+        inc(FluActIntentos);
+        if FluActIntentos>=MaxIntentosEsp then begin
+          AgregaLog('Error FLUACT Pos: '+IntToStr(xpos)+' Manguera: '+IntToStr(FluActMang)+
+            ': se descarta despues de '+IntToStr(FluActIntentos)+' intentos');
+          FluActPendiente[FluActMang]:=false;
+          FluActIntentos:=0;
+        end;
+      end;
+      FluActMang:=0;
+      Exit;
+    end;
+    if (StFlu<>0) or (estatus<>1) or SwDesHabilitado or SwOCC or (EspPaso<>0) or
+       (PasoPresetVehiculo<>pvLibre) then
+      Exit;
+    xmang:=1;
+    while (xmang<=3) and (not FluActPendiente[xmang]) do
+      inc(xmang);
+    if xmang>3 then begin
+      FluAct:=false;
+      Exit;
+    end;
+    FluActMang:=xmang;
+    IniciaEspecial(xpos,(80000+xpos*100+xmang*10+TAdicf[xpos,xmang])/100);
+  end;
+end;
+
+procedure TSQLWReader.ProcesaFluStd;
+var
+  xpos:integer;
+  nombre:string;
+begin
+  if StFlu in [1,11] then begin
+    // Se envia a la primera posicion inactiva sin otro proceso
+    for xpos:=1 to MaxPosCarga do
+      with TPosCarga[xpos] do
+        if (NoComb>0) and (estatus=1) and (not SwDesHabilitado) and (not SwOCC) and
+           (EspPaso=0) and (PasoPresetVehiculo=pvLibre) and (FluActMang=0) then begin
+          if StFlu=1 then
+            IniciaEspecial(xpos,ValorOn/100)
+          else
+            IniciaEspecial(xpos,ValorOff/100);
+          PosFlu:=xpos;
+          inc(StFlu);
+          Exit;
+        end;
+  end
+  else if (StFlu in [2,12]) and (TPosCarga[PosFlu].EspPaso=0) then begin
+    if StFlu=2 then
+      nombre:='flustd'
+    else
+      nombre:='flumin';
+    if TPosCarga[PosFlu].EspResultado=1 then begin
+      AgregaLog('Envio correcto preset '+nombre+' Pos: '+IntToStr(PosFlu));
+      StFlu:=0;
+    end
+    else begin
+      inc(IntentosFlu);
+      if IntentosFlu>=MaxIntentosEsp then begin
+        AgregaLog('Error preset '+nombre+': se descarta despues de '+IntToStr(IntentosFlu)+' intentos');
+        StFlu:=0;
+      end
+      else
+        dec(StFlu);
+    end;
+    PosFlu:=0;
+  end;
+end;
+
+// Avanza en cada estatus recibido los presets especiales, el flujo por vehiculo,
+// FLUACT y FLUSTD/FLUMIN sin detener el ciclo de consulta
+procedure TSQLWReader.ProcesaFlujos;
+var
+  xpos:integer;
+begin
+  for xpos:=1 to MaxPosCarga do
+    with TPosCarga[xpos] do
+      if NoComb>0 then begin
+        if EspCancela then begin
+          EspCancela:=false;
+          if estatus in [2,9] then begin
+            AgregaLog('Cancela preset especial interrumpido Posicion '+IntToClaveNum(xpos,2));
+            EncolaComando('E'+IntToClaveNum(xpos,2));
+            SwParado:=true;
+          end;
+        end;
+        if EspPaso<>0 then
+          ProcesaEspecial(xpos);
+        ProcesaPresetVehiculo(xpos);
+        ProcesaFluAct(xpos);
+      end;
+  ProcesaFluStd;
 end;
 
 end.
