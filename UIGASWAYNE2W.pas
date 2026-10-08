@@ -66,6 +66,7 @@ type
     WtwDivLitros:Integer;
     GtwTimeout:Integer;
     GtwTiempoCmnd:Integer;
+    GtwIntentos:Integer;
     WtwPosIniExt:Integer;
     PosCiclo,MangCiclo,
     ls,ContLeeVenta,
@@ -233,6 +234,7 @@ type
        HoraOcc:TDateTime;
        Avanzar:Integer;
        SinComunicacion: Boolean;
+       FallasEstatus: Integer;
        HoraDesconexion: TDateTime;
 
        // ---- Flujo TipoClb=5 (FLUACT) ----
@@ -276,6 +278,8 @@ type
 
 const
   MaxReintentosTotal = 3;
+  MaxFallasEstatus = 3;   // Sondeos sin respuesta antes de reportar sin comunicacion
+  SegReintentoSinCom = 10; // Segundos entre sondeos de una posicion sin comunicacion
 
 var
   SQLW2Reader: TSQLW2Reader;
@@ -830,8 +834,9 @@ begin
 
     WtwDivImporte:=100;
     WtwDivLitros:=100;
-    GtwTimeout:=1000;
-    GtwTiempoCmnd:=1000;
+    GtwTimeout:=300;
+    GtwTiempoCmnd:=50;
+    GtwIntentos:=2;
     WtwPosIniExt:=999;
     for i:=1 to NoElemStrEnter(variables) do begin
       variable:=ExtraeElemStrEnter(variables,i);
@@ -843,6 +848,8 @@ begin
         GtwTimeout:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),0)
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWTIEMPOCMND' then
         GtwTiempoCmnd:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),0)
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='GTWINTENTOS' then
+        GtwIntentos:=Max(1,StrToIntDef(ExtraeElemStrSep(variable,2,'='),2))
       else if UpperCase(ExtraeElemStrSep(variable,1,'='))='WTWPOSINIEXT' then
         WtwPosIniExt:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),0);
     end;
@@ -1148,10 +1155,11 @@ var ss:string;
     iNoIntento    :integer;
     bOk           :boolean;
 begin
+  result:=false;
   try
     Timer1.Enabled:=False;
     try
-      iMaxIntentos:=1;
+      iMaxIntentos:=GtwIntentos;
       iBytesEsperados:=13;
       iNoIntento:= 0;
       bOk:=false;
@@ -1176,7 +1184,11 @@ begin
             repeat
                ServiceThread.ProcessRequests(False);
             until ( ( bListo ) or ( timerexpired(etTimeOut) ) );
-            AgregaLog('R  ('+IntToStr(length(sRespuesta))+') '+StrToHexSep(sRespuesta));
+            // StrToHexSep no admite cadenas vacias
+            if sRespuesta<>'' then
+              AgregaLog('R  ('+IntToStr(length(sRespuesta))+') '+StrToHexSep(sRespuesta))
+            else
+              AgregaLog('R  (0) Sin respuesta');
             if ( bListo ) then begin
               if length(sRespuesta)=13 then
                 bOk:=true;
@@ -2279,7 +2291,7 @@ begin
                       rsp:=IniciaPresetVehiculo(xpos,xp,0,xlitros)
                     else begin
                       EsperaMiliseg(50);
-                      if EnviaPresetPesosBomba(xpos,1,xlitros) then begin
+                      if EnviaPresetPesosBomba(xpos,2,xlitros) then begin
                         TPosCarga[xpos].HoraOcc:=now;
                         TPosCarga[xpos].SwPreset:=true;
                         TPosCarga[xpos].SwPreset2:=true;
@@ -2676,10 +2688,22 @@ begin
                    ((TipoClb[1]='5')and((StFlu in [1,2,11,12])or
                     (StProtec in [1,2])or(FluAct)or(FluActMang<>0))) then begin  // ESTATUS
                   try
-                    if (not swdeshabil) and ((not SinComunicacion) or (SecondsBetween(Now, HoraDesconexion) >= RandomRange(55, 65))) then begin   // no polea los que estan deshabilitados
+                    if (not swdeshabil) and ((not SinComunicacion) or (SecondsBetween(Now, HoraDesconexion) >= RandomRange(SegReintentoSinCom, SegReintentoSinCom+3))) then begin   // no polea los que estan deshabilitados
                       EstatusAnt:=Estatus;
                       estatusRecibido:=DameEstatus(PosCiclo);
                       Estatus:=estatusRecibido;          // Aqui bota cuando no hay posicion activa
+                      // Una falla aislada conserva el ultimo estatus conocido
+                      if Estatus=0 then begin
+                        inc(FallasEstatus);
+                        if (EstatusAnt<>0) and (FallasEstatus<MaxFallasEstatus) then begin
+                          AgregaLog('Sin respuesta de estatus Pos '+inttostr(PosCiclo)+' ('+inttostr(FallasEstatus)+'), se conserva estatus '+inttostr(EstatusAnt));
+                          Estatus:=EstatusAnt;
+                        end;
+                      end
+                      else begin
+                        FallasEstatus:=0;
+                        SinComunicacion:=False;
+                      end;
                       ContadorAlarma:=0;
                       if estatus=2 then begin
                         swdesp:=true;
@@ -2712,7 +2736,9 @@ begin
                             EsperaFinVenta:=0;
                         end;
                       end;
-                      if (estatusant = 0) and (estatus = 0) then
+                      // Una venta en curso se sigue sondeando en cada ciclo
+                      if (estatusant = 0) and (estatus = 0) and
+                         (not swdesp) and (not swcargando) and (not SwLecturaFinalPendiente) then
                       begin
                         SinComunicacion := True;
                         HoraDesconexion := Now;
@@ -3066,10 +3092,11 @@ var ss:string;
     iNoIntento    :integer;
     bOk           :boolean;
 begin
+  result:=false;
   try
     Timer1.Enabled:=False;
     try
-      iMaxIntentos:=1;
+      iMaxIntentos:=GtwIntentos;
       iBytesEsperados:=13;
       iNoIntento:= 0;
       bOk:=false;
@@ -3094,7 +3121,11 @@ begin
             repeat
                ServiceThread.ProcessRequests(False);
             until ( ( bListo2 ) or ( timerexpired(etTimeOut2) ) );
-            AgregaLog('R  ('+IntToStr(length(sRespuesta2))+') '+StrToHexSep(sRespuesta2));
+            // StrToHexSep no admite cadenas vacias
+            if sRespuesta2<>'' then
+              AgregaLog('R  ('+IntToStr(length(sRespuesta2))+') '+StrToHexSep(sRespuesta2))
+            else
+              AgregaLog('R  (0) Sin respuesta');
             if ( bListo2 ) then begin
               if length(sRespuesta2)=13 then
                 bOk:=true;
