@@ -30,6 +30,10 @@ const
 
 type
   TFlujoPos = array[1..32, 1..3] of Integer; // porcentaje por posicion y manguera (-1 = sin valor)
+  // Preset 9,BB,M,P,% de TipoClb 8; Valor = P*10 + %
+  TCmnd8 = record
+    BB, M, Valor: Integer;
+  end;
 
   TSQLGReader = class(TService)
     pSerial: TApdComPort;
@@ -167,6 +171,14 @@ type
     procedure CargaFlujoAct;
     procedure CargaFlujoBase(const texto: string);
     procedure GuardaFlujoBase;
+    function Importe9(xbb, xmang, xvalor: integer): real;
+    function ValorObjetivo8(xpos, xmang: integer): integer;
+    function CodigoProteccion8(const valores: string): integer;
+    function Cola8Ocupada: boolean;
+    function HayFlujoVehiculo: boolean;
+    procedure CalculaCola8;
+    procedure AplicaCmnd8(const cmd: TCmnd8);
+    procedure ProcesaFlujo8(xpos: integer);
     procedure EstatusDispensarios;
     procedure ProcesaComandos;
     procedure AvanzaPosCiclo;
@@ -254,6 +266,11 @@ const
   MaxEspera2 = 20;
   MaxEspera3 = 10;
   MaxIntentosLRC = 3;
+  // TipoClb 8 (version 4064): BB 1..16 o 17 = todas, M 1..3 o 5 = todas
+  MaxPos8 = 16;
+  PosTodas8 = 17;
+  MangTodas8 = 5;
+  MaxCola8 = 64;
 
 type
   TMetodos = (NOTHING_e, INITIALIZE_e, PARAMETERS_e, LOGIN_e, LOGOUT_e, PRICES_e, AUTHORIZE_e, STOP_e, START_e, SELFSERVICE_e, FULLSERVICE_e, BLOCK_e, UNBLOCK_e,
@@ -274,6 +291,13 @@ var
   StFlu,PosFlu,StCiclo,CombPendiente:integer;
   SwEspMinimoCerrar:Boolean;
   FlujoPorVehiculo:Boolean;
+  // TipoClb 8
+  ProtGilbarco: Integer;                        // proteccion 0 ninguna, 1 5 lts, 2 10 lts, 3 20 lts, 4 20 lts con curva
+  FluMin8: Boolean;                             // flujo en minimo (0%)
+  Recalcula8: Boolean;                          // hay que recalcular los comandos pendientes
+  TAplicado8: array[1..32, 1..3] of Integer;    // P*10+% aplicado en el dispensario (-1 = desconocido)
+  Cola8: array[1..MaxCola8] of TCmnd8;
+  NCola8, PosCola8, ICola8: Integer;            // comandos pendientes; posicion e indice del comando en proceso
   Licencia3Ok: Boolean;
   Servicio: TService;
 
@@ -360,6 +384,7 @@ var
   razonSocial, licAdic: string;
   esLicTemporal: Boolean;
   fechaVenceLic: TDateTime;
+  i, j: Integer;
 begin
   try
     Servicio:=Sender;
@@ -376,6 +401,12 @@ begin
     ConfAdic := config.ReadString('CONF', 'ConfAdic', '');
     DieselAdic := UpperCase(config.ReadString('CONF', 'DieselAdic', ''))='SI';
     FlujoPorVehiculo := UpperCase(config.ReadString('CONF', 'FlujoPorVehiculo', ''))='SI';
+    ProtGilbarco := StrToIntDef(config.ReadString('CONF', 'ProtGilbarco', '0'), 0);
+    if not (ProtGilbarco in [0..4]) then
+      ProtGilbarco := 0;
+    for i := 1 to 32 do
+      for j := 1 to 3 do
+        TAplicado8[i, j] := -1;
     ListaCmnd := TStringList.Create;
     detenido := True;
     estado := -1;
@@ -1447,6 +1478,10 @@ begin
                    for xpos:=1 to MaxPosCarga do
                      TPosCarga[xpos].StFluPos:=1;
                  end;
+             '8':begin  // Porcentajes de ConfAdic con presets 9,BB,M,P,%
+                   FluMin8:=False;
+                   Recalcula8:=True;
+                 end;
             else begin  // General
                    StFlu:=1;
                  end;
@@ -1454,6 +1489,19 @@ begin
           end;
         end
 //        // CMND: FLU OFF
+        else if (ss='FLUMIN') and (TipoClb[1]='8') then begin
+          // Responde hasta que se aplican los presets de 0%
+          SwAplicaCmnd:=False;
+          if TabCmnd[xcmnd].SwNuevo then begin
+            FluMin8:=True;
+            Recalcula8:=True;
+          end
+          else if not Cola8Ocupada then begin
+            rsp:='OK';
+            GuardarLog(0);
+            SwAplicaCmnd:=True;
+          end;
+        end
         else if ss='FLUMIN' then begin
           SwAplicaCmnd:=False;
           if TabCmnd[xcmnd].SwNuevo then begin
@@ -1488,11 +1536,31 @@ begin
         end
         else if ss='FLUACT' then begin
           rsp:='OK';
-          for xpos:=1 to MaxPosCarga do
-            TPosCarga[xpos].FluAct:=True;
+          if TipoClb[1]='8' then
+            Recalcula8:=True
+          else
+            for xpos:=1 to MaxPosCarga do
+              TPosCarga[xpos].FluAct:=True;
+        end
+        // CMND: PROGRAMA PROTECCIONES (PROT 1;10;20)
+        else if ss='PROT' then begin
+          if TipoClb[1]<>'8' then
+            rsp:='Protecciones Gilbarco solo disponibles para TipoClb=8'
+          else begin
+            ProtGilbarco:=CodigoProteccion8(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '));
+            with TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini') do
+            try
+              WriteString('CONF', 'ProtGilbarco', IntToStr(ProtGilbarco));
+            finally
+              Free;
+            end;
+            Recalcula8:=True;
+            rsp:='OK';
+            AgregaLog('Proteccion Gilbarco registrada: '+IntToStr(ProtGilbarco));
+          end;
         end
         else if ss='ESTADI' then begin
-          if StFlu=0 then begin
+          if (StFlu=0) and ((TipoClb[1]<>'8') or (not Cola8Ocupada)) then begin
             rsp:='OK';
             if SwEspMinimoCerrar then begin
               GuardarLog(0);
@@ -2046,7 +2114,7 @@ var
   config: TIniFile;
   texto: string;
 begin
-  if TipoClb[1] <> '5' then Exit;
+  if not (TipoClb[1] in ['5', '8']) then Exit;
   config := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
   try
     texto := Trim(config.ReadString('CONF', 'ConfAdic', ''));
@@ -2193,9 +2261,328 @@ begin
   AgregaLog('ConfAdic actualizado desde FLUACT: ' + texto);
 end;
 
+function TSQLGReader.Importe9(xbb, xmang, xvalor: integer): real;
+begin
+  // $9,BBM.P%: BB posicion (17 = todas), M manguera (5 = todas), P proteccion, % porcentaje
+  Result := (900000 + xbb * 1000 + xmang * 100 + xvalor) / 100;
+end;
+
+function TSQLGReader.ValorObjetivo8(xpos, xmang: integer): integer;
+begin
+  Result := ProtGilbarco * 10 + IfThen(FluMin8, 0, TAdicf[xpos, xmang]);
+end;
+
+function TSQLGReader.CodigoProteccion8(const valores: string): integer;
+var
+  i: integer;
+  valor: string;
+begin
+  // Traduce los litros de NuevoAdic (1, 10, 20) al modo de la 4064; con varios toma el mayor
+  Result := 0;
+  for i := 1 to NoElemStrSep(valores, ';') do
+  begin
+    valor := Trim(ExtraeElemStrSep(valores, i, ';'));
+    if valor = '' then
+      Continue;
+    case StrToIntDef(valor, -1) of
+      1: Result := Max(Result, 1);
+      10: Result := Max(Result, 2);
+      20: Result := Max(Result, 3);
+    else
+      AgregaLog('Proteccion ignorada por no estar permitida: ' + valor + ' litros');
+    end;
+  end;
+end;
+
+function TSQLGReader.Cola8Ocupada: boolean;
+begin
+  Result := Recalcula8 or (NCola8 > 0) or (PosCola8 <> 0);
+end;
+
+function TSQLGReader.HayFlujoVehiculo: boolean;
+var
+  xpos: integer;
+begin
+  Result := False;
+  for xpos := 1 to MaxPosCarga do
+    if TPosCarga[xpos].PasoPresetVehiculo in pvEnProceso then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+procedure TSQLGReader.CalculaCola8;
+var
+  objetivo: array[1..MaxPos8, 1..3] of integer; // -2 = manguera no aplica
+  distintos: array[0..99] of integer;
+  nDist, xpos, xmang, i, g, costo, mejorCosto, nPos: integer;
+  mejorG: integer;
+  mejorM, mv: array[1..3] of integer;
+  hayMang: array[1..3] of boolean;
+
+  function Base(p, m: integer): integer;
+  begin
+    if mv[m] >= 0 then
+      Result := mv[m]
+    else if g >= 0 then
+      Result := g
+    else
+      Result := TAplicado8[p, m];
+  end;
+
+  // Comandos de la posicion: uno por manguera distinta o uno general (vpos) mas excepciones
+  function CostoPos(p: integer; var vpos: integer): integer;
+  var
+    m, k, cambios, c: integer;
+  begin
+    vpos := -1;
+    cambios := 0;
+    for m := 1 to 3 do
+      if (objetivo[p, m] >= 0) and (Base(p, m) <> objetivo[p, m]) then
+        inc(cambios);
+    Result := cambios;
+    if cambios < 2 then
+      Exit;
+    for k := 1 to 3 do
+      if objetivo[p, k] >= 0 then
+      begin
+        c := 1;
+        for m := 1 to 3 do
+          if (objetivo[p, m] >= 0) and (objetivo[p, m] <> objetivo[p, k]) then
+            inc(c);
+        if c < Result then
+        begin
+          Result := c;
+          vpos := objetivo[p, k];
+        end;
+      end;
+  end;
+
+  function CostoTotal: integer;
+  var
+    p, m, vpos: integer;
+  begin
+    Result := 0;
+    if g >= 0 then
+      inc(Result);
+    for m := 1 to 3 do
+      if mv[m] >= 0 then
+        inc(Result);
+    for p := 1 to nPos do
+      inc(Result, CostoPos(p, vpos));
+  end;
+
+  procedure Agrega(xbb, xm, xvalor: integer);
+  begin
+    if NCola8 >= MaxCola8 then
+      raise Exception.Create('Demasiados comandos de flujo TipoClb 8');
+    inc(NCola8);
+    Cola8[NCola8].BB := xbb;
+    Cola8[NCola8].M := xm;
+    Cola8[NCola8].Valor := xvalor;
+    AgregaLog('Comando flujo TipoClb 8 #' + IntToStr(NCola8) + ': $' + FormatoMoneda(Importe9(xbb, xm, xvalor)));
+  end;
+
+  // Candidatos: ninguno (-1) o un valor objetivo existente
+  function Candidato(idx: integer): integer;
+  begin
+    if idx = 0 then
+      Result := -1
+    else
+      Result := distintos[idx - 1];
+  end;
+
+  procedure AgregaDistinto(v: integer);
+  var
+    k: integer;
+  begin
+    for k := 0 to nDist - 1 do
+      if distintos[k] = v then
+        Exit;
+    distintos[nDist] := v;
+    inc(nDist);
+  end;
+
+var
+  vpos, gi, i1, i2, i3: integer;
+begin
+  NCola8 := 0;
+  nPos := Min(MaxPosCarga, MaxPos8);
+  nDist := 0;
+  for xmang := 1 to 3 do
+    hayMang[xmang] := False;
+  for xpos := 1 to nPos do
+    for xmang := 1 to 3 do
+      objetivo[xpos, xmang] := -2;
+  for xpos := 1 to MaxPosCarga do
+    with TPosCarga[xpos] do
+    begin
+      if (NoComb = 0) or SwDesHabil then
+        Continue;
+      if xpos > MaxPos8 then
+      begin
+        AgregaLog('Posicion ' + IntToStr(xpos) + ' fuera de rango para TipoClb 8');
+        Continue;
+      end;
+      for i := 1 to NoComb do
+      begin
+        xmang := TMang[i];
+        if not (xmang in [1..3]) then
+          Continue;
+        if not (FluMin8 or FluActConfigurado[xmang]) then
+        begin
+          AgregaLog('Falta porcentaje en ConfAdic Pos: ' + IntToStr(xpos) + ' Manguera: ' + IntToStr(xmang));
+          Continue;
+        end;
+        objetivo[xpos, xmang] := ValorObjetivo8(xpos, xmang);
+        hayMang[xmang] := True;
+        AgregaDistinto(objetivo[xpos, xmang]);
+      end;
+    end;
+
+  // Busca la combinacion de general (17,5) y por manguera (17,M) con menos comandos
+  mejorCosto := MaxInt;
+  mejorG := -1;
+  for xmang := 1 to 3 do
+    mejorM[xmang] := -1;
+  for gi := 0 to nDist do
+  begin
+    g := Candidato(gi);
+    for i1 := 0 to IfThen(hayMang[1], nDist, 0) do
+    begin
+      mv[1] := Candidato(i1);
+      if (mv[1] >= 0) and (mv[1] = g) then Continue;
+      for i2 := 0 to IfThen(hayMang[2], nDist, 0) do
+      begin
+        mv[2] := Candidato(i2);
+        if (mv[2] >= 0) and (mv[2] = g) then Continue;
+        for i3 := 0 to IfThen(hayMang[3], nDist, 0) do
+        begin
+          mv[3] := Candidato(i3);
+          if (mv[3] >= 0) and (mv[3] = g) then Continue;
+          costo := CostoTotal;
+          if costo < mejorCosto then
+          begin
+            mejorCosto := costo;
+            mejorG := g;
+            for xmang := 1 to 3 do
+              mejorM[xmang] := mv[xmang];
+          end;
+        end;
+      end;
+    end;
+  end;
+
+  // Arma la cola: general, por manguera, por posicion y por manguera de la posicion
+  g := mejorG;
+  for xmang := 1 to 3 do
+    mv[xmang] := mejorM[xmang];
+  if g >= 0 then
+    Agrega(PosTodas8, MangTodas8, g);
+  for xmang := 1 to 3 do
+    if mv[xmang] >= 0 then
+      Agrega(PosTodas8, xmang, mv[xmang]);
+  for xpos := 1 to nPos do
+  begin
+    CostoPos(xpos, vpos);
+    if vpos >= 0 then
+    begin
+      Agrega(xpos, MangTodas8, vpos);
+      for xmang := 1 to 3 do
+        if (objetivo[xpos, xmang] >= 0) and (objetivo[xpos, xmang] <> vpos) then
+          Agrega(xpos, xmang, objetivo[xpos, xmang]);
+    end
+    else
+      for xmang := 1 to 3 do
+        if (objetivo[xpos, xmang] >= 0) and (Base(xpos, xmang) <> objetivo[xpos, xmang]) then
+          Agrega(xpos, xmang, objetivo[xpos, xmang]);
+  end;
+  AgregaLog('Flujo TipoClb 8: ' + IntToStr(NCola8) + ' comando(s), proteccion ' + IntToStr(ProtGilbarco) +
+    IfThen(FluMin8, ', minimo', ', estandar'));
+end;
+
+procedure TSQLGReader.AplicaCmnd8(const cmd: TCmnd8);
+var
+  xpos, xmang: integer;
+begin
+  for xpos := 1 to Min(MaxPosCarga, MaxPos8) do
+    if (cmd.BB = PosTodas8) or (cmd.BB = xpos) then
+      for xmang := 1 to 3 do
+        if (cmd.M = MangTodas8) or (cmd.M = xmang) then
+          TAplicado8[xpos, xmang] := cmd.Valor;
+end;
+
+procedure TSQLGReader.ProcesaFlujo8(xpos: integer);
+var
+  i, j, xmang: integer;
+  libre: boolean;
+begin
+  with TPosCarga[xpos] do
+  begin
+    // El preset autoriza la posicion; se detiene a los 500 ms aun con Estatus=9
+    if (PosCola8 = xpos) and (FluActMang <> 0) then
+    begin
+      if (MilliSecondsBetween(Now, HoraPresetFluAct) >= 500) and DetenerDespacho(xpos) then
+      begin
+        AgregaLog('Se detuvo despacho flujo TipoClb 8 Pos: ' + IntToStr(xpos) +
+          ' $' + FormatoMoneda(Importe9(Cola8[ICola8].BB, Cola8[ICola8].M, Cola8[ICola8].Valor)));
+        AplicaCmnd8(Cola8[ICola8]);
+        for i := ICola8 to NCola8 - 1 do
+          Cola8[i] := Cola8[i + 1];
+        dec(NCola8);
+        FluActMang := 0;
+        PosCola8 := 0;
+        ICola8 := 0;
+      end;
+      Exit;
+    end;
+    if (PosCola8 <> 0) or (not Swflu) or (Estatus <> 1) or SwDesHabil or (NoComb = 0) then
+      Exit;
+    if not (Recalcula8 or (NCola8 > 0)) then
+      Exit;
+    // Los presets generales alterarian una venta con flujo por vehiculo
+    if HayFlujoVehiculo then
+      Exit;
+    if Recalcula8 then
+    begin
+      Recalcula8 := False;
+      CalculaCola8;
+    end;
+    // Primer comando que no se traslapa con uno anterior pendiente y se envia por esta posicion
+    for i := 1 to NCola8 do
+    begin
+      libre := True;
+      for j := 1 to i - 1 do
+        if ((Cola8[j].BB = PosTodas8) or (Cola8[i].BB = PosTodas8) or (Cola8[j].BB = Cola8[i].BB)) and
+           ((Cola8[j].M = MangTodas8) or (Cola8[i].M = MangTodas8) or (Cola8[j].M = Cola8[i].M)) then
+        begin
+          libre := False;
+          Break;
+        end;
+      if libre and ((Cola8[i].BB = PosTodas8) or (Cola8[i].BB = xpos)) then
+      begin
+        xmang := TMang[1];
+        for j := 1 to NoComb do
+          if TMang[j] = Cola8[i].M then
+            xmang := TMang[j];
+        if EnviaPresetFluAct(xpos, xmang, Importe9(Cola8[i].BB, Cola8[i].M, Cola8[i].Valor)) then
+        begin
+          FluActMang := xmang;
+          HoraPresetFluAct := Now;
+          PosCola8 := xpos;
+          ICola8 := i;
+        end;
+        Exit;
+      end;
+    end;
+  end;
+end;
+
 function TSQLGReader.IniciaPresetVehiculo(xpos, xmang: integer; pesos, litros: real): string;
 var
   porcentaje: integer;
+  enviado: boolean;
 begin
   Result := 'OK';
   with TPosCarga[xpos] do
@@ -2203,8 +2590,12 @@ begin
     // Sin una base conocida no cambiar el flujo ni inventar un porcentaje de retorno.
     if not (xmang in [1..3]) then
       Result := 'Manguera no valida para flujo por vehiculo'
-    else if (TipoClb[1] = '5') and (not FluActConfigurado[xmang]) then
-      Result := 'Falta porcentaje de flujo en ConfAdic para esta manguera';
+    else if (TipoClb[1] in ['5', '8']) and (not FluActConfigurado[xmang]) then
+      Result := 'Falta porcentaje de flujo en ConfAdic para esta manguera'
+    else if (TipoClb[1] = '8') and (xpos > MaxPos8) then
+      Result := 'Posicion no valida para flujo por vehiculo'
+    else if (TipoClb[1] = '8') and Cola8Ocupada then
+      Result := 'Programacion de flujo pendiente';
     if Result <> 'OK' then
     begin
       swflujovehiculo := false;
@@ -2223,6 +2614,14 @@ begin
     LitrosPresetVehiculo := litros;
     case TipoClb[1] of
       '5': ValorFlujoOriginal := (80000 + xpos * 100 + xmang * 10 + TAdicf[xpos,xmang]) / 100;
+      '8': begin
+             // Restaura lo aplicado; se desconoce mientras dura el flujo por vehiculo
+             if TAplicado8[xpos,xmang] >= 0 then
+               ValorFlujoOriginal := Importe9(xpos, xmang, TAplicado8[xpos,xmang])
+             else
+               ValorFlujoOriginal := Importe9(xpos, xmang, ValorObjetivo8(xpos, xmang));
+             TAplicado8[xpos,xmang] := -1;
+           end;
       '2': ValorFlujoOriginal := TAdicf[xpos,1];
     else
       porcentaje := IfThen(EsDiesel, tagx[2], tagx[1]);
@@ -2240,7 +2639,11 @@ begin
     end;
     HoraPresetVehiculo := Now;
     PasoPresetVehiculo := pvEsperaEspecial;
-    if not EnviaPresetFluAct(xpos, xmang, (80000 + xpos * 100 + xmang * 10 + flujovehiculo) / 100) then
+    if TipoClb[1] = '8' then
+      enviado := EnviaPresetFluAct(xpos, xmang, Importe9(xpos, xmang, ProtGilbarco * 10 + flujovehiculo))
+    else
+      enviado := EnviaPresetFluAct(xpos, xmang, (80000 + xpos * 100 + xmang * 10 + flujovehiculo) / 100);
+    if not enviado then
     begin
       PasoPresetVehiculo := pvError;
       Result := 'No se pudo prefijar/autorizar flujo por vehiculo';
@@ -2334,7 +2737,7 @@ begin
            end
            else
            begin
-             if TipoClb[1] = '5' then
+             if TipoClb[1] in ['5', '8'] then
                enviado := EnviaPresetFluAct(xpos, MangPresetVehiculo, ValorFlujoOriginal)
              else
                enviado := EnviaPresetFluAct(xpos, 1, ValorFlujoOriginal);
@@ -2350,6 +2753,8 @@ begin
          begin
            AgregaLog('Flujo original restaurado Pos: '+IntToStr(xpos)+
              ' Valor: '+FormatoMoneda(ValorFlujoOriginal));
+           if TipoClb[1] = '8' then
+             TAplicado8[xpos, MangPresetVehiculo] := Round(ValorFlujoOriginal * 100) mod 100;
            swflujovehiculo := false;
            PasoPresetVehiculo := pvLibre;
          end;
@@ -2485,6 +2890,7 @@ begin
                                   StFlu:=0;
                                 end;
                               end;
+                          '8':ProcesaFlujo8(PosCiclo);
                          else begin
                             if (Estatus=1)and(Stflu=1)and(swflu) and (FluActMang=0) and
                                ((CombPendiente=0) or ((CombPendiente=3) and (EsDiesel)) or ((CombPendiente=1) and (not EsDiesel))) then begin // Manda Flu
@@ -2999,7 +3405,13 @@ begin
         AgregaLog('TipoClb: ' + TipoClb + ', Mensaje: ' + msj);
 
         // En TipoClb=5 FLUSTD solo activa el flujo; ConfAdic se actualiza con FLUACT.
-        if TipoClb[1] <> '5' then
+        // En TipoClb=8 FLUSTD trae los porcentajes por posicion y manguera.
+        if TipoClb[1] = '8' then
+        begin
+          CargaFlujoBase(msj);
+          GuardaFlujoBase;
+        end
+        else if TipoClb[1] <> '5' then
         begin
           config := TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'PDISPENSARIOS.ini');
           try
@@ -3013,6 +3425,19 @@ begin
       else begin
         msj:=ConfAdic;
         AgregaLog('FLUSTD inicio: TipoClb=' + TipoClb + ', ConfAdic=[' + msj + ']');
+        if TipoClb[1] = '8' then
+        begin
+          // Al iniciar se desconoce lo programado en el dispensario
+          for xpos := 1 to MaxPosCarga do
+          begin
+            TPosCarga[xpos].FluActMang := 0;
+            for i := 1 to 3 do
+              TAplicado8[xpos, i] := -1;
+          end;
+          NCola8 := 0;
+          PosCola8 := 0;
+          ICola8 := 0;
+        end;
       end;
 
       if TipoClb[1] = '2' then
@@ -3027,7 +3452,7 @@ begin
           AgregaLog('Flu1: ' + IntToStr(TAdicf[xpos, 1]) + ', Flu2: ' + IntToStr(TAdicf[xpos, 2]) + ', Flu3: ' + IntToStr(TAdicf[xpos, 3]));
         end;
       end
-      else if TipoClb[1] <> '5' then
+      else if not (TipoClb[1] in ['5', '8']) then
         for i := 1 to NoElemStrSep(msj, ';') do
           tagx[i] := StrToInt(ExtraeElemStrSep(msj, i, ';'));
 
@@ -3086,13 +3511,15 @@ begin
           // Una manguera omitida conserva su porcentaje y cualquier envio pendiente.
           if valor <> '' then begin
             TAdicf[xpos, j] := StrToIntDef(valor, 0);
-            TPosCarga[xpos].FluActPendiente[j] := True;
+            // TipoClb=8 calcula sus comandos contra lo aplicado, sin pendientes por manguera
+            if TipoClb[1] <> '8' then
+              TPosCarga[xpos].FluActPendiente[j] := True;
             TPosCarga[xpos].FluActConfigurado[j] := True;
           end;
         end;
         AgregaLog('Flu1: ' + IntToStr(TAdicf[xpos, 1]) + ', Flu2: ' + IntToStr(TAdicf[xpos, 2]) + ', Flu3: ' + IntToStr(TAdicf[xpos, 3]));
       end;
-      if TipoClb[1] = '5' then
+      if TipoClb[1] in ['5', '8'] then
         GuardaFlujoBase;
       AddPeticionJSON(folio, 'True|' + IntToStr(EjecutaComando('FLUACT')) + '|');
     except
@@ -3667,7 +4094,7 @@ begin
     Timer1.Enabled:=True;
     Timer2.Enabled:=False;
     SetEstadoJSON(estado);
-    if (TipoClb[1] = '5') or (ConfAdic<>'') then
+    if (TipoClb[1] in ['5', '8']) or (ConfAdic<>'') then
       FluStd(0, ConfAdic);
     AddPeticionJSON(folio, 'True|');      
   except
