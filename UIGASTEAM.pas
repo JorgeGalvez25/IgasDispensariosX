@@ -80,6 +80,7 @@ type
     function GuardarLogPetRes:string;
     function AgregaPosCarga(posiciones: TlkJSONbase): string;
     function Inicializar(msj: string): string;
+    procedure LiberaInicializacion;
     function Login(mensaje: string): string;
     function Logout: string;
     function IniciaPrecios(msj: string): string;
@@ -1583,13 +1584,31 @@ var
   datosPuerto,json,variables,variable:string;
 begin
   try
+    // Un INITIALIZE con el servicio ya inicializado lo reinicia con la nueva configuracion
     if estado>-1 then begin
-      Result:='False|El servicio ya habia sido inicializado|';
-      Exit;
+      AgregaLog('INITIALIZE con servicio inicializado (estado '+IntToStr(estado)+'), se reinicializa');
+      LiberaInicializacion;
     end;
 
     json:=ExtraeElemStrSep(msj,1,'|');
     variables:=ExtraeElemStrSep(msj,2,'|');
+
+    // Las variables se leen antes de AgregaPosCarga, que usa Con_DigitoAjuste
+    Con_DigitoAjuste:=0;
+    TresDecimTotTeam:='No';
+    FlujoPorVehiculo:='No';
+    CodigoTeam:='00000000';
+    for i:=1 to NoElemStrEnter(variables) do begin
+      variable:=ExtraeElemStrEnter(variables,i);
+      if UpperCase(ExtraeElemStrSep(variable,1,'='))='CONDIGITOAJUSTE' then
+        Con_DigitoAjuste:=StrToIntDef(ExtraeElemStrSep(variable,2,'='),0)
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='TRESDECIMTOTTEAM' then
+        TresDecimTotTeam:=ExtraeElemStrSep(variable,2,'=')
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='FLUJOPORVEHICULO' then
+        FlujoPorVehiculo:=ExtraeElemStrSep(variable,2,'=')
+      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='CODIGOTEAM' then
+        CodigoTeam:=ExtraeElemStrSep(variable,2,'=');
+    end;
 
     js := TlkJSON.ParseText(json);
     consolas := js.Field['Consoles'];
@@ -1608,21 +1627,6 @@ begin
     if Result<>'' then
       Exit;
 
-    Con_DigitoAjuste:=0;
-    TresDecimTotTeam:='No';
-    FlujoPorVehiculo:='No';
-    CodigoTeam:='00000000';
-    for i:=1 to NoElemStrEnter(variables) do begin
-      if UpperCase(ExtraeElemStrSep(variable,1,'='))='CONDIGITOAJUSTE' then
-        Con_DigitoAjuste:=StrToInt(ExtraeElemStrSep(variable,2,'='))
-      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='TRESDECIMTOTTEAM' then
-        TresDecimTotTeam:=ExtraeElemStrSep(variable,2,'=')
-      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='FLUJOPORVEHICULO' then
-        FlujoPorVehiculo:=ExtraeElemStrSep(variable,2,'=')
-      else if UpperCase(ExtraeElemStrSep(variable,1,'='))='CODIGOTEAM' then
-        CodigoTeam:=ExtraeElemStrSep(variable,2,'=');
-    end;
-
     productos := js.Field['Products'];
 
     for i:=0 to productos.Count-1 do begin
@@ -1640,6 +1644,35 @@ begin
     on e:Exception do
       Result:='False|Excepcion: '+e.Message+'|';
   end;
+end;
+
+procedure TSQLTReader.LiberaInicializacion;
+var
+  i:Integer;
+begin
+  // Detiene el sondeo, cierra el puerto y deja el servicio como no inicializado
+  Timer1.Enabled:=False;
+  if pSerial.Open then
+    pSerial.Open:=False;
+  ListaCmnd.Clear;
+  SwEsperaRsp:=False;
+  ContEsperaRsp:=0;
+  ContCmndU:=0;
+  SwComandoB:=False;
+  PosCiclo:=0;
+  ContB:=0;
+  Linea:='';
+  SwEspera:=False;
+  LinEstadoGen:='';
+  for i:=1 to 200 do begin
+    TabCmnd[i].SwActivo:=False;
+    TabCmnd[i].SwResp:=False;
+    TabCmnd[i].SwNuevo:=False;
+  end;
+  for i:=1 to 4 do
+    LPrecios[i]:=0;
+  detenido:=True;
+  estado:=-1;
 end;
 
 function TSQLTReader.Login(mensaje: string): string;

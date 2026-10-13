@@ -92,6 +92,7 @@ type
     procedure AgregaLogPetRes(lin: string);
     procedure Responder(socket:TCustomWinSocket;resp:string);
     function Inicializar(msj: string): string;
+    procedure LiberaInicializacion;
     function IniciaPSerial(datosPuerto:string): string;
     function AgregaPosCarga(posiciones: TlkJSONbase): string;
     function IniciaPrecios(msj: string): string;
@@ -618,9 +619,10 @@ var
   config:TIniFile;
 begin
   try
+    // Un INITIALIZE con el servicio ya inicializado lo reinicia con la nueva configuracion
     if estado>-1 then begin
-      Result:='False|El servicio ya habia sido inicializado|';
-      Exit;
+      AgregaLog('INITIALIZE con servicio inicializado (estado '+IntToStr(estado)+'), se reinicializa');
+      LiberaInicializacion;
     end;
 
     json:=ExtraeElemStrSep(msj,1,'|');
@@ -703,6 +705,41 @@ begin
     on e:Exception do
       Result:='False|Excepcion: '+e.Message+'|';
   end;
+end;
+
+procedure TSQLWReader.LiberaInicializacion;
+var
+  i:Integer;
+begin
+  // Detiene el sondeo, cierra el puerto y deja el servicio como no inicializado
+  Timer1.Enabled:=False;
+  if pSerial.Open then
+    pSerial.Open:=False;
+  for i:=1 to 200 do begin
+    TabCmnd[i].SwActivo:=False;
+    TabCmnd[i].SwResp:=False;
+  end;
+  ListaCmnd.Clear;
+  StFlu:=0;
+  PosFlu:=0;
+  IntentosFlu:=0;
+  StProtec:=0;
+  PosProtec:=0;
+  IntentosProtec:=0;
+  // Estado de recepcion serial
+  LineaBuff:='';
+  Linea:='';
+  LineaTimer:='';
+  FinLinea:=False;
+  SwBcc:=False;
+  SwEsperaRsp:=False;
+  SwComandoN:=False;
+  SwComandoB:=False;
+  ContadorAlarma:=0;
+  for i:=1 to 4 do
+    LPrecios[i]:=0;
+  detenido:=True;
+  estado:=-1;
 end;
 
 function TSQLWReader.IniciaPSerial(

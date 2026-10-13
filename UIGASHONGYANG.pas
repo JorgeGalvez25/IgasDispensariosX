@@ -99,6 +99,7 @@ type
    function Iniciar: string;
    function Shutdown:string;
    function Terminar:string;
+   procedure LiberaInicializacion;
    function ObtenerEstado: string;
    function GuardarLog(fecha:TDateTime=0): string;
    function RespuestaComando(msj:string): string;
@@ -575,9 +576,10 @@ var
   datosPuerto:string;
 begin
   try
+    // Un INITIALIZE con el servicio ya inicializado lo reinicia con la nueva configuracion
     if estado>-1 then begin
-      Result:='False|El servicio ya habia sido inicializado|';
-      Exit;
+      AgregaLog('INITIALIZE con servicio inicializado (estado '+IntToStr(estado)+'), se reinicializa');
+      LiberaInicializacion;
     end;
 
     js := TlkJSON.ParseText(ExtraeElemStrSep(json,1,'|'));
@@ -2300,6 +2302,33 @@ begin
     estado:=-1;
     Result:='True|';
   end;
+end;
+
+procedure TSQLHReader.LiberaInicializacion;
+var
+  i:Integer;
+begin
+  // Detiene el sondeo, cierra el puerto y deja el servicio como no inicializado
+  Timer1.Enabled:=False;
+  if pSerial.Open then
+    pSerial.Open:=False;
+  for i:=1 to 200 do begin
+    TabCmnd[i].SwActivo:=False;
+    TabCmnd[i].SwResp:=False;
+    TabCmnd[i].SwNuevo:=False;
+  end;
+  ApCola:=0;
+  SwEsperaCmnd:=False;
+  SwProcesando:=False;
+  LineaBuff:='';
+  LineaProc:='';
+  FinLinea:=False;
+  MangCiclo:=1;
+  CmndProc:='A';
+  for i:=1 to 4 do
+    LPrecios[i]:=0;
+  detenido:=True;
+  estado:=-1;
 end;
 
 function TSQLHReader.ObtenerEstado: string;

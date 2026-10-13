@@ -129,6 +129,7 @@ type
     function Bloquear(msj: string): string;
     function Desbloquear(msj: string): string;
     function Inicializar(msj: string): string;
+    procedure LiberaInicializacion;
     function Terminar: string;
     function NoElemStrEnter(xstr:string):word;
     function ExtraeElemStrEnter(xstr:string;ind:word):string;
@@ -2968,9 +2969,10 @@ var
   datosPuerto,json,variables,variable:string;
 begin
   try
+    // Un INITIALIZE con el servicio ya inicializado lo reinicia con la nueva configuracion
     if estado>-1 then begin
-      Result:='False|El servicio ya habia sido inicializado|';
-      Exit;
+      AgregaLog('INITIALIZE con servicio inicializado (estado '+IntToStr(estado)+'), se reinicializa');
+      LiberaInicializacion;
     end;
 
     json:=ExtraeElemStrSep(msj,1,'|');
@@ -3038,6 +3040,30 @@ begin
     on e:Exception do
       Result:='False|Excepcion: '+e.Message+'|';
   end;
+end;
+
+procedure TSQLPReader.LiberaInicializacion;
+var
+  i:Integer;
+begin
+  // Detiene el sondeo, cierra el puerto y deja el servicio como no inicializado
+  Timer1.Enabled:=False;
+  if pSerial.Open then
+    pSerial.Open:=False;
+  for i:=1 to 200 do begin
+    TabCmnd[i].SwActivo:=False;
+    TabCmnd[i].SwResp:=False;
+    TabCmnd[i].SwNuevo:=False;
+  end;
+  ListaCmnd.Clear;
+  SwEsperaRsp:=False;
+  ComandosFijos:=False;
+  SwComandoB:=False;
+  NumPaso:=0;
+  for i:=1 to 4 do
+    LPrecios[i]:=0;
+  detenido:=True;
+  estado:=-1;
 end;
 
 function TSQLPReader.Terminar: string;
