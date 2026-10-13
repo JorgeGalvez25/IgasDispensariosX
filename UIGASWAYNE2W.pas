@@ -1861,6 +1861,10 @@ begin
     result:=false;
     if not PosicionRecibida(xPosCarga) then
       Exit;
+    if xTipoPreset=0 then begin  // Venta libre: no se prefija
+      result:=true;
+      Exit;
+    end;
     PonPuertoPos(xPosCarga);
     if xTipoPreset=1 then begin  // Pesos
       stComando:= char(ControlByte(xPosCarga,7))+#33+ConvierteBCD(xValor*WtwDivImporte,6);
@@ -2237,6 +2241,7 @@ var ss,rsp,scmnd,precios      :string;
     xcmnd,xpos,xcomb,
     xp,xfolio,i,codigoProteccion,posRecibidas,xtipopre :integer;
     ximporte,xlitros,nprec,xlitrosconv,xvalorpre  :real;
+    swventalibre :boolean;
 begin
   try
     CmndNuevo:=False;
@@ -2273,11 +2278,14 @@ begin
                   xImporte:=StrToFLoat(SnImporteStr);
                 rsp:=ValidaCifra(xImporte,4,2);
                 xlitrosconv:=0;
+                swventalibre:=false;
                 if rsp='Valor excede maximo permitido' then
                   rsp:=ConvierteImporteALitros(xpos,StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,4,' '),0),xImporte,xlitrosconv);
                 if rsp='OK' then
-                  if (xImporte<=0) then
+                  if (xImporte<=0) then begin
+                    swventalibre:=true;
                     xImporte:=9999;
+                  end;
                 TPosCarga[xpos].MontoPreset:='$ '+FormatoMoneda(xImporte);
               except
                 rsp:='Error en Importe';
@@ -2293,6 +2301,11 @@ begin
                     if xlitrosconv>0 then begin
                       xtipopre:=2;
                       xvalorpre:=xlitrosconv;
+                    end
+                    // Importe 0: venta libre, se autoriza sin prefijar
+                    else if swventalibre and (not TPosCarga[xpos].swflujovehiculo) then begin
+                      xtipopre:=0;
+                      xvalorpre:=0;
                     end
                     else begin
                       xtipopre:=1;
