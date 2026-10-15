@@ -96,6 +96,7 @@ type
     TAdic   :array[1..3] of String;
     function  TransmiteComando1(DataBlock:string):boolean;
     function  TransmiteComando2(DataBlock:string):boolean;
+    function  PuedeSondear(xPosCarga:integer):boolean;
   public
     ListaLog:TStringList;
     ListaLogPetRes:TStringList;
@@ -245,6 +246,7 @@ type
        SinComunicacion: Boolean;
        FallasEstatus: Integer;
        HoraDesconexion: TDateTime;
+       ComunicoAlgunaVez: Boolean; // Respondio al menos una vez desde INITIALIZE
 
        // ---- Flujo TipoClb=5 (FLUACT) ----
        FluAct              :Boolean;
@@ -289,6 +291,7 @@ const
   MaxReintentosTotal = 3;
   MaxFallasEstatus = 3;   // Sondeos sin respuesta antes de reportar sin comunicacion
   SegReintentoSinCom = 10; // Segundos entre sondeos de una posicion sin comunicacion
+  SegReintentoNuncaCom = 45; // Igual, para una posicion que nunca ha respondido
   ToleranciaPresetPesos = 0.10;  // Excedente sobre el preset antes de detener la venta
   ToleranciaPresetLitros = 0.02;
 
@@ -690,6 +693,10 @@ begin
       SwVentaPagada:=false;
       SwCambiaPrecio:=false;
       SwLeePrecios:=true;
+      SinComunicacion:=false;
+      FallasEstatus:=0;
+      HoraDesconexion:=0;
+      ComunicoAlgunaVez:=false;
     end;
 
     // Se reutiliza el nodo PosCarga para no duplicarlo al reinicializar
@@ -1255,6 +1262,20 @@ begin
   finally
     // HALT o INITIALIZE pueden llegar mientras se espera respuesta
     Timer1.Enabled:=estado>0;
+  end;
+end;
+
+// Sondea solo posiciones con comunicacion o cuyo tiempo de reintento ya vencio
+function TSQLW2Reader.PuedeSondear(xPosCarga: integer): boolean;
+var segReintento:Integer;
+begin
+  with TPosCarga[xPosCarga] do begin
+    if ComunicoAlgunaVez then
+      segReintento:=SegReintentoSinCom
+    else
+      segReintento:=SegReintentoNuncaCom;
+    result:=(not SinComunicacion) or
+            (SecondsBetween(Now, HoraDesconexion) >= RandomRange(segReintento, segReintento+3));
   end;
 end;
 
@@ -2895,7 +2916,8 @@ begin
             delete(StrCiclo,1,1);
           try
             case NumPaso of
-              0:if SwLeePrecios then begin
+              // Los precios se leen solo si la posicion ya respondio al estatus
+              0:if SwLeePrecios and (ComunicoAlgunaVez or (Estatus>0)) and PuedeSondear(PosCiclo) then begin
                   if LeePrecios(PosCiclo) then
                     SwLeePrecios:=false;
                 end;
@@ -2903,7 +2925,7 @@ begin
                    ((TipoClb[1]='5')and((StFlu in [1,2,11,12])or
                     (StProtec in [1,2])or(FluAct)or(FluActMang<>0))) then begin  // ESTATUS
                   try
-                    if (not swdeshabil) and ((not SinComunicacion) or (SecondsBetween(Now, HoraDesconexion) >= RandomRange(SegReintentoSinCom, SegReintentoSinCom+3))) then begin   // no polea los que estan deshabilitados
+                    if (not swdeshabil) and PuedeSondear(PosCiclo) then begin   // no polea los que estan deshabilitados
                       EstatusAnt:=Estatus;
                       estatusRecibido:=DameEstatus(PosCiclo);
                       Estatus:=estatusRecibido;          // Aqui bota cuando no hay posicion activa
@@ -2918,6 +2940,7 @@ begin
                       else begin
                         FallasEstatus:=0;
                         SinComunicacion:=False;
+                        ComunicoAlgunaVez:=True;
                       end;
                       ContadorAlarma:=0;
                       if estatus=2 then begin
