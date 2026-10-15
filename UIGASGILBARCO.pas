@@ -223,7 +223,7 @@ type
     HoraNivelPrecio: TDateTime;
 
     StFluPos,
-    FallosEstat: integer;
+    FallosEstat: integer;   // Sondeos de estatus seguidos sin respuesta
     HoraOcc: TDateTime;
     CombActual: Integer;
     MangActual: Integer;
@@ -267,6 +267,7 @@ const
   MaxEspera2 = 20;
   MaxEspera3 = 10;
   MaxIntentosLRC = 3;
+  MaxFallasEstatus = 3;   // Sondeos sin respuesta antes de reportar sin comunicacion
   // TipoClb 8 (version 4064): BB 1..16 o 17 = todas, M 1..3 o 5 = todas
   MaxPos8 = 16;
   PosTodas8 = 17;
@@ -1203,6 +1204,9 @@ begin
         DivLitros := GtwDivLitros;
         estatus := 0;
         estatusant := 0;
+        FallosEstat := 0;
+        SinComunicacion := false;
+        HoraDesconexion := 0;
         SwRevisaAutorizadoRun := false;
         HoraOcc:=0;
         NoComb := 0;
@@ -2843,12 +2847,32 @@ begin
                         EstatusAnt := Estatus;
                         estatusRecibido := DameEstatus(PosCiclo);    // Aqui bota cuando no hay posicion activa
                         AgregaLog('Se solicito estatus Pos: '+IntToStr(PosCiclo));
-                        if (Estatusant = 0) and (estatusRecibido = 0) then
-                          estatus:=0
-                        else if (estatusRecibido = 0) then
-                          estatus:=estatusant
+                        // Una falla aislada conserva el ultimo estatus conocido
+                        if estatusRecibido = 0 then
+                        begin
+                          inc(FallosEstat);
+                          if (Estatusant <> 0) and (FallosEstat < MaxFallasEstatus) then
+                          begin
+                            AgregaLog('Sin respuesta de estatus Pos '+IntToStr(PosCiclo)+' ('+IntToStr(FallosEstat)+'), se conserva estatus '+IntToStr(Estatusant));
+                            estatus:=estatusant;
+                          end
+                          else
+                            estatus:=0;
+                        end
                         else
+                        begin
+                          FallosEstat:=0;
+                          SinComunicacion:=False;
                           estatus:=estatusRecibido;
+                          // Una venta interrumpida por falta de comunicacion se procesa como fin de venta
+                          if (Estatusant = 0) and swcargando and (estatus = 1) then
+                          begin
+                            AgregaLog('Pos '+IntToStr(PosCiclo)+' recupera comunicacion tras venta en curso, se procesa fin de venta');
+                            estatus:=3;
+                            SwNivelPrecio := true;
+                            HoraNivelPrecio := Now + 5 * TMSegundo;
+                          end;
+                        end;
                         // Revisar una sola vez por posicion al iniciar con Run.
                         // Sin respuesta (0), esperar la primera lectura valida.
                         if SwRevisaAutorizadoRun and (estatusRecibido <> 0) then
@@ -2886,7 +2910,8 @@ begin
                         end;
                         if estatus = 2 then
                           PosActual := 0;
-                        if (estatusant = 0) and (estatus = 0) then
+                        // Una venta en curso se sigue sondeando en cada ciclo
+                        if (estatusant = 0) and (estatus = 0) and (not swcargando) then
                         begin
                           SinComunicacion := True;
                           HoraDesconexion := Now;
