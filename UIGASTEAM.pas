@@ -1068,7 +1068,8 @@ begin
                   Esperamiliseg(200);
                 end;
                 EnviaPreset(rsp,xcomb,false);
-              end;
+              end
+              else AgregaLog('Preset no enviado Pos: '+IntToStr(SnPosCarga)+' - Combustible '+IntToStr(xcomb)+' no existe en la posicion');
             end;
           end;
         end
@@ -2463,6 +2464,7 @@ begin
     exit;
   end;
   if TPosCarga[xpos].SwDesHabilitado then begin
+    AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - SwDesHabil='+BoolToStr(TPosCarga[xpos].SwDesHabilitado,True));
     rsp:='Posición Deshabilitada';
     exit;
   end;

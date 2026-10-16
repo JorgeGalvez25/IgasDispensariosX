@@ -1713,7 +1713,15 @@ begin
               end;
             end
             else
+            begin
+              // Con estatus valido, el preset lo bloquean las banderas de flujo
+              if TPosCarga[xpos].estatus in [1, 5] then
+                AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - PasoPresetVehiculo='+
+                  IntToStr(ord(TPosCarga[xpos].PasoPresetVehiculo))+
+                  ' FluActMang='+IntToStr(TPosCarga[xpos].FluActMang)+
+                  ' FluAct='+BoolToStr(TPosCarga[xpos].FluAct, True));
               rsp := 'Posicion de Carga no Disponible';
+            end;
           end
           else
             rsp := 'Posicion de Carga no Existe';
@@ -1809,7 +1817,15 @@ begin
               end;
             end
             else
+            begin
+              // Con estatus valido, el preset lo bloquean las banderas de flujo
+              if TPosCarga[xpos].estatus in [1, 5] then
+                AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - PasoPresetVehiculo='+
+                  IntToStr(ord(TPosCarga[xpos].PasoPresetVehiculo))+
+                  ' FluActMang='+IntToStr(TPosCarga[xpos].FluActMang)+
+                  ' FluAct='+BoolToStr(TPosCarga[xpos].FluAct, True));
               rsp := 'Posicion de Carga no Disponible';
+            end;
           end
           else
             rsp := 'Posicion de Carga no Existe';

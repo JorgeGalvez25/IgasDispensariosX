@@ -196,7 +196,8 @@ type
        SwDesHabilitado,
        SwOCC,SwCmndB,
        SwPidiendoTotales,
-       SwFINV             :boolean;
+       SwFINV,
+       LogPresetEsp       :boolean;
        Mensaje :string[12];
        ValorMapeo :string[10];
        ModoOpera:string[8];
@@ -850,6 +851,7 @@ begin
       SwParado:=false;
       SwDeshabilitado:=false;
       SwFINV:=false;
+      LogPresetEsp:=false;
       SwOCC:=false;
       ContDetenido:=0;
       ContOcc:=0;
@@ -2691,6 +2693,7 @@ begin
     exit;
   end;
   if TPosCarga[xpos].SwDesHabilitado then begin
+    AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - SwDesHabilitado='+BoolToStr(TPosCarga[xpos].SwDesHabilitado,True));
     rsp:='Posici�n Deshabilitada';
     exit;
   end;
@@ -3324,14 +3327,22 @@ begin
       Exit;
     if TPosCarga[xpos].PasoPresetVehiculo<>pvLibre then begin
       rsp:='Posicion de Carga no Disponible';
+      AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - PasoPresetVehiculo='+IntToStr(TPosCarga[xpos].PasoPresetVehiculo));
       Result:=true;
       Exit;
     end;
     if (TPosCarga[xpos].EspPaso<>0) or (TPosCarga[xpos].FluActMang<>0) then begin
+      // Registra una sola vez por espera
+      if not TPosCarga[xpos].LogPresetEsp then begin
+        TPosCarga[xpos].LogPresetEsp:=true;
+        AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - EspPaso='+IntToStr(TPosCarga[xpos].EspPaso)+
+          ' FluActMang='+IntToStr(TPosCarga[xpos].FluActMang));
+      end;
       SwAplicaCmnd:=false;
       Result:=true;
       Exit;
     end;
+    TPosCarga[xpos].LogPresetEsp:=false;
     cantidad:=ExtraeElemStrSep(Comando,3,' ');
     decimales:=ExtraeElemStrSep(cantidad,2,'.');
     if not (FlujoPorVehiculo and (Length(decimales)=5)) then
@@ -3345,6 +3356,7 @@ begin
       end;
       if SwDesHabilitado then begin
         rsp:='Posicion Deshabilitada';
+        AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - SwDesHabilitado='+BoolToStr(SwDesHabilitado,True));
         Exit;
       end;
       // Decimales: 2 de la cantidad y 3 del flujo; el 3er decimal es el flujo (123 = flujo 0)

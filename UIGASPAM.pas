@@ -2097,6 +2097,8 @@ begin
   rsp:='OK';
   xpos:=SnPosCarga;
   if TPosCarga[xpos].SwDesHabilitado then begin
+    if TPosCarga[xpos].estatus in [1,5,9] then
+      AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - SwDesHabil='+BoolToStr(TPosCarga[xpos].SwDesHabilitado,True));
     rsp:='Posicion Bloqueada';
     exit;
   end;
@@ -2151,6 +2153,8 @@ begin
   rsp:='OK';
   xpos:=SnPosCarga;
   if TPosCarga[xpos].SwDesHabilitado then begin
+    if TPosCarga[xpos].estatus in [1,5,9] then
+      AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - SwDesHabil='+BoolToStr(TPosCarga[xpos].SwDesHabilitado,True));
     rsp:='Posicion Deshabilitada';
     exit;
   end;

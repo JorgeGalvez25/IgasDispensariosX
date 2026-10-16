@@ -247,6 +247,7 @@ type
        FallasEstatus: Integer;
        HoraDesconexion: TDateTime;
        ComunicoAlgunaVez: Boolean; // Respondio al menos una vez desde INITIALIZE
+       PresetBloqLog: Boolean; // Ya se registro que el preset pendiente no se envio
 
        // ---- Flujo TipoClb=5 (FLUACT) ----
        FluAct              :Boolean;
@@ -648,6 +649,7 @@ begin
       SwPreset:=false;
       SwPreset2:=false;
       PosPreset:=0;
+      PresetBloqLog:=false;
       TipoPreset:=0;
       ValorPreset:=0;
       SwVigilaPreset:=false;
@@ -2181,6 +2183,9 @@ begin
        FluActPendiente[2] or FluActPendiente[3] then begin
       swflujovehiculo:=false;
       Result:='Programacion FLUACT pendiente';
+      AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - FluAct='+BoolToStr(FluAct,True)+
+        ' FluActMang='+IntToStr(FluActMang)+' FluActPendiente='+BoolToStr(FluActPendiente[1],True)+'/'+
+        BoolToStr(FluActPendiente[2],True)+'/'+BoolToStr(FluActPendiente[3],True));
       Exit;
     end;
     MangPresetVehiculo:=xmang;
@@ -2257,6 +2262,7 @@ begin
         if estatusRecibido in [1,5] then begin
           HoraOcc:=Now;
           SwPreset:=true;
+          PresetBloqLog:=false;
           SwPreset2:=true;
           PosPreset:=MangPresetVehiculo;
           if PesosPresetVehiculo>0 then begin
@@ -2378,6 +2384,7 @@ begin
                       if EnviaPresetPesosBomba(xpos,xtipopre,xvalorpre) then begin
                         TPosCarga[xpos].HoraOcc:=now;
                         TPosCarga[xpos].SwPreset:=true;
+                        TPosCarga[xpos].PresetBloqLog:=false;
                         TPosCarga[xpos].SwPreset2:=true;
                         TPosCarga[xpos].PosPreset:=xp;
                         TPosCarga[xpos].TipoPreset:=xtipopre;
@@ -2391,7 +2398,12 @@ begin
                 end;
               end;
             end
-            else rsp:='Posicion de Carga no Disponible';
+            else begin
+              if TPosCarga[xpos].estatus in [1,5] then
+                AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - PasoPresetVehiculo='+IntToStr(TPosCarga[xpos].PasoPresetVehiculo)+
+                          ' FluActMang='+IntToStr(TPosCarga[xpos].FluActMang)+' FluAct='+BoolToStr(TPosCarga[xpos].FluAct,True));
+              rsp:='Posicion de Carga no Disponible';
+            end;
           end
           else rsp:='Posicion de Carga no Existe';
         end
@@ -2440,6 +2452,7 @@ begin
                       if EnviaPresetPesosBomba(xpos,2,xlitros) then begin
                         TPosCarga[xpos].HoraOcc:=now;
                         TPosCarga[xpos].SwPreset:=true;
+                        TPosCarga[xpos].PresetBloqLog:=false;
                         TPosCarga[xpos].SwPreset2:=true;
                         TPosCarga[xpos].PosPreset:=xp;
                         TPosCarga[xpos].TipoPreset:=2;
@@ -2453,7 +2466,12 @@ begin
                 end;
               end;
             end
-            else rsp:='Posicion de Carga no Disponible';
+            else begin
+              if TPosCarga[xpos].estatus in [1,5] then
+                AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - PasoPresetVehiculo='+IntToStr(TPosCarga[xpos].PasoPresetVehiculo)+
+                          ' FluActMang='+IntToStr(TPosCarga[xpos].FluActMang)+' FluAct='+BoolToStr(TPosCarga[xpos].FluAct,True));
+              rsp:='Posicion de Carga no Disponible';
+            end;
           end
           else rsp:='Posicion de Carga no Existe';    
         end
@@ -3156,6 +3174,11 @@ begin
                           swpreset2:=true;
                           IniciaVigilanciaPreset(PosCiclo);
                         end;
+                    end
+                    else if SwPreset and (not PresetBloqLog) then begin
+                      PresetBloqLog:=True;
+                      AgregaLog('Preset no enviado Pos: '+IntToStr(PosCiclo)+' - PosPreset='+IntToStr(PosPreset)+
+                                ' PosMangLev='+IntToStr(PosMangLev));
                     end;
                   end
                   else begin // AUTORIZA PREPAGO
@@ -3173,6 +3196,11 @@ begin
                           swpreset2:=true;
                           IniciaVigilanciaPreset(PosCiclo);
                         end;
+                    end
+                    else if SwPreset and (not PresetBloqLog) then begin
+                      PresetBloqLog:=True;
+                      AgregaLog('Preset no enviado Pos: '+IntToStr(PosCiclo)+' - PosPreset='+IntToStr(PosPreset)+
+                                ' PosMangLev='+IntToStr(PosMangLev));
                     end;
                   end
                 end;
