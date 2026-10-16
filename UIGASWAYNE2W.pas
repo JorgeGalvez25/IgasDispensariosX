@@ -133,6 +133,7 @@ type
     function  DameEstatus(xPosCarga:integer) : integer;
     function  ReanudaDespacho(xPosCarga: integer) : boolean;
     function  DetenerDespacho(xPosCarga : integer) : boolean;
+    function  EnviaSaleEnd(xPosCarga: integer; xActiva: boolean) : boolean;
     procedure EstatusDispensarios;
     function  DameLecturas(xPosCarga : integer; var rLitros, rPrecio, rPesos : real; xFinal : boolean) : boolean;
     function  LeeVolumen(xPosCarga : integer; var rLitros : real) : boolean;
@@ -248,6 +249,9 @@ type
        HoraDesconexion: TDateTime;
        ComunicoAlgunaVez: Boolean; // Respondio al menos una vez desde INITIALIZE
        PresetBloqLog: Boolean; // Ya se registro que el preset pendiente no se envio
+       SwTransAbierta: Boolean;   // Bomba In Use y sin pistola con la venta ya cobrada
+       SwSaleEndActivo: Boolean;  // Se activo Sale End en la bomba y falta desactivarlo
+       HoraSaleEnd: TDateTime;    // Ultimo envio de Sale End
 
        // ---- Flujo TipoClb=5 (FLUACT) ----
        FluAct              :Boolean;
@@ -693,6 +697,9 @@ begin
       SwStatusFV:=false;
       SwLecturaFinalPendiente:=false;
       SwVentaPagada:=false;
+      SwTransAbierta:=false;
+      SwSaleEndActivo:=false;
+      HoraSaleEnd:=0;
       SwCambiaPrecio:=false;
       SwLeePrecios:=true;
       SinComunicacion:=false;
@@ -1312,6 +1319,7 @@ begin
           StrBin:=ByteToBin(ord(sRespuesta[5]));
           for i:=0 to 7 do
             tbit[i]:=(strbin[8-i]='1');
+          TPosCarga[xPosCarga].SwTransAbierta:=false;
           if tbit[7] then begin
             iStatus:=2;     // despachando
             TPosCarga[xPosCarga].SwPreset:=false;
@@ -1323,6 +1331,8 @@ begin
               end
               else if TPosCarga[xPosCarga].SwVentaPagada then begin
                 iStatus:=1;        // venta ya confirmada mediante PAYMENT
+                // In Use sin pistola: la bomba aun no cierra la transaccion cobrada
+                TPosCarga[xPosCarga].SwTransAbierta:=true;
               end
               else begin
                 istatus:=9;        // autorizado
@@ -1381,6 +1391,7 @@ begin
           StrBin:=ByteToBin(ord(sRespuesta2[5]));
           for i:=0 to 7 do
             tbit[i]:=(strbin[8-i]='1');
+          TPosCarga[xPosCarga].SwTransAbierta:=false;
           if tbit[7] then begin
             iStatus:=2;     // despachando
             TPosCarga[xPosCarga].SwPreset:=false;
@@ -1392,6 +1403,8 @@ begin
               end
               else if TPosCarga[xPosCarga].SwVentaPagada then begin
                 iStatus:=1;        // venta ya confirmada mediante PAYMENT
+                // In Use sin pistola: la bomba aun no cierra la transaccion cobrada
+                TPosCarga[xPosCarga].SwTransAbierta:=true;
               end
               else begin
                 istatus:=9;        // autorizado
@@ -1555,6 +1568,39 @@ begin
   except
     on e:Exception do begin
       AgregaLog('Error DetenerDespacho: '+e.Message);
+      GuardarLog(0);
+    end;
+  end;
+end;
+
+// Block 0 con Data 1 bit 4 (Set Sale End) o bit 3 (Clear Sale End). Con Sale End
+// activo y sin producto seleccionado la bomba termina la transaccion en curso.
+function TSQLW2Reader.EnviaSaleEnd(xPosCarga: integer; xActiva: boolean): boolean;
+var DataBlock,
+    stComando :string;
+begin
+  try
+    result:=false;
+    if not PosicionRecibida(xPosCarga) then
+      Exit;
+    PonPuertoPos(xPosCarga);
+    if xActiva then
+      stComando:= char(ControlByte(xPosCarga,0))+#0+#$10+#0+#0     // 08 00 10 00 00
+    else
+      stComando:= char(ControlByte(xPosCarga,0))+#0+#$08+#0+#0;    // 08 00 08 00 00
+    DataBlock:=EmpacaWayne(stComando);
+    if SegmActual=1 then begin
+      if ( ( TransmiteComando1(DataBlock) ) and ( length(sRespuesta)=13 ) ) then
+        result:=true;
+    end
+    else begin
+      if ( ( TransmiteComando2(DataBlock) ) and ( length(sRespuesta2)=13 ) ) then
+        result:=true;
+    end;
+  except
+    on e:Exception do begin
+      result:=false;
+      AgregaLog('Error EnviaSaleEnd: '+e.Message);
       GuardarLog(0);
     end;
   end;
@@ -2319,7 +2365,7 @@ begin
           xpos:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '),0);
           rsp:='OK';
           if (xpos in [1..MaxPosCarga]) then begin
-            if (TPosCarga[xpos].estatus in [1,5]) and
+            if (TPosCarga[xpos].estatus in [1,5]) and (not TPosCarga[xpos].SwTransAbierta) and
                (TPosCarga[xpos].PasoPresetVehiculo = pvLibre) and
                (TPosCarga[xpos].FluActMang = 0) and (not TPosCarga[xpos].FluAct) then begin
               try
@@ -2401,7 +2447,8 @@ begin
             else begin
               if TPosCarga[xpos].estatus in [1,5] then
                 AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - PasoPresetVehiculo='+IntToStr(TPosCarga[xpos].PasoPresetVehiculo)+
-                          ' FluActMang='+IntToStr(TPosCarga[xpos].FluActMang)+' FluAct='+BoolToStr(TPosCarga[xpos].FluAct,True));
+                          ' FluActMang='+IntToStr(TPosCarga[xpos].FluActMang)+' FluAct='+BoolToStr(TPosCarga[xpos].FluAct,True)+
+                          ' TransAbierta='+BoolToStr(TPosCarga[xpos].SwTransAbierta,True));
               rsp:='Posicion de Carga no Disponible';
             end;
           end
@@ -2411,7 +2458,7 @@ begin
           xpos:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '),0);
           rsp:='OK';
           if (xpos in [1..MaxPosCarga]) then begin
-            if (TPosCarga[xpos].estatus in [1,5]) and
+            if (TPosCarga[xpos].estatus in [1,5]) and (not TPosCarga[xpos].SwTransAbierta) and
                (TPosCarga[xpos].PasoPresetVehiculo = pvLibre) and
                (TPosCarga[xpos].FluActMang = 0) and (not TPosCarga[xpos].FluAct) then begin
               try
@@ -2469,7 +2516,8 @@ begin
             else begin
               if TPosCarga[xpos].estatus in [1,5] then
                 AgregaLog('Preset no enviado Pos: '+IntToStr(xpos)+' - PasoPresetVehiculo='+IntToStr(TPosCarga[xpos].PasoPresetVehiculo)+
-                          ' FluActMang='+IntToStr(TPosCarga[xpos].FluActMang)+' FluAct='+BoolToStr(TPosCarga[xpos].FluAct,True));
+                          ' FluActMang='+IntToStr(TPosCarga[xpos].FluActMang)+' FluAct='+BoolToStr(TPosCarga[xpos].FluAct,True)+
+                          ' TransAbierta='+BoolToStr(TPosCarga[xpos].SwTransAbierta,True));
               rsp:='Posicion de Carga no Disponible';
             end;
           end
@@ -2991,6 +3039,24 @@ begin
                             Estatus:=3
                           else
                             EsperaFinVenta:=0;
+                        end;
+                      end;
+                      // Transaccion cobrada que la bomba mantiene abierta: se fuerza su
+                      // cierre con Sale End y se desactiva al volver la bomba a reposo
+                      if SwTransAbierta then begin
+                        if (HoraSaleEnd=0) or (SecondsBetween(Now,HoraSaleEnd)>=10) then begin
+                          if not SwSaleEndActivo then
+                            AgregaLog('Transaccion abierta en bomba Pos '+inttostr(PosCiclo)+', se envia Sale End');
+                          if EnviaSaleEnd(PosCiclo,true) then
+                            SwSaleEndActivo:=true;
+                          HoraSaleEnd:=Now;
+                        end;
+                      end
+                      else if (estatusRecibido in [1,5]) and (SwSaleEndActivo or (HoraSaleEnd<>0)) then begin
+                        if EnviaSaleEnd(PosCiclo,false) then begin
+                          AgregaLog('Bomba cerro la transaccion Pos '+inttostr(PosCiclo)+', se desactiva Sale End');
+                          SwSaleEndActivo:=false;
+                          HoraSaleEnd:=0;
                         end;
                       end;
                       // Una venta en curso se sigue sondeando en cada ciclo
