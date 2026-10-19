@@ -2264,7 +2264,8 @@ begin
   with TPosCarga[xpos] do begin
     if (PasoPresetVehiculo=pvEsperaVenta) and (estatusRecibido in [2,3,8,9]) then
       PasoPresetVehiculo:=pvVenta;
-    if (PasoPresetVehiculo=pvVenta) and (estatusRecibido=1) then begin
+    // La restauracion espera a que la bomba cierre la transaccion cobrada
+    if (PasoPresetVehiculo=pvVenta) and (estatusRecibido=1) and (not SwTransAbierta) then begin
       PasoPresetVehiculo:=pvRestaura;
       HoraPresetVehiculo:=Now;
       AgregaLog('Restauracion de flujo pendiente Pos: '+IntToStr(xpos));
@@ -2281,7 +2282,7 @@ begin
     pasoAnterior:=PasoPresetVehiculo;
     case PasoPresetVehiculo of
       pvCancelacion:
-        if estatusRecibido=1 then
+        if (estatusRecibido=1) and (not SwTransAbierta) then
           PasoPresetVehiculo:=pvRestaura
         else if estatusRecibido in [2,9] then
           CancelaAutorizacionFlu(xpos);
