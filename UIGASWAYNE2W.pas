@@ -137,6 +137,7 @@ type
     procedure EstatusDispensarios;
     function  DameLecturas(xPosCarga : integer; var rLitros, rPrecio, rPesos : real; xFinal : boolean) : boolean;
     function  LeeVolumen(xPosCarga : integer; var rLitros : real) : boolean;
+    function  LeeDigitos78(xPosCarga : integer; var xPesos, xLitros : integer) : boolean;
     procedure CorrigeDesbordeImporte(xPosCarga : integer; var rLitros, rPrecio, rPesos : real);
     function  DameTotal(xPosCarga,xPos : integer; var rTotalLitros: real) : boolean;
     function  Autoriza(xPosCarga: integer) : boolean;
@@ -324,6 +325,9 @@ var
   ProteccionesWayne :integer;
   FlujoPorVehiculo :Boolean;
   DetenerPresetExcedido :Boolean; // Detiene ventas que rebasan su preset (ini: DetenerPresetExcedido=Si)
+  ProtocoloExtendido :Boolean; // Importe y presets de 7 digitos, iGEM1 (ini: ProtocoloExtendido=Si)
+  EnterosPresetPesos,
+  EnterosPresetLitros :byte;   // Enteros admitidos en presets segun el protocolo
 
 implementation
 
@@ -383,6 +387,18 @@ begin
     xres:=xres+char(nn);
   end;
   result:=xres;
+end;
+
+// Entero en binario, byte menos significativo primero
+function ConvierteBinario(xvalor:real;xbytes:integer):string;
+var num,i:integer;
+begin
+  num:=trunc(xvalor+0.5);
+  result:='';
+  for i:=1 to xbytes do begin
+    result:=result+char(num and $FF);
+    num:=num shr 8;
+  end;
 end;
 
 
@@ -460,6 +476,15 @@ begin
       TipoClb := '1';
     FlujoPorVehiculo := UpperCase(config.ReadString('CONF','FlujoPorVehiculo',''))='SI';
     DetenerPresetExcedido := UpperCase(config.ReadString('CONF','DetenerPresetExcedido',''))='SI';
+    ProtocoloExtendido := UpperCase(config.ReadString('CONF','ProtocoloExtendido',''))='SI';
+    if ProtocoloExtendido then begin
+      EnterosPresetPesos := 5;   // 99999.99
+      EnterosPresetLitros := 4;  // 9999.99
+    end
+    else begin
+      EnterosPresetPesos := 4;   // 9999.99
+      EnterosPresetLitros := 3;  // 999.99
+    end;
     SwFlu := False;
     StFlu := 0;
     PosFlu := 0;
@@ -1628,17 +1653,48 @@ begin
   result:=true;
 end;
 
-// El importe llega en 6 digitos BCD; con el volumen real se recuperan las vueltas perdidas.
+// Ext 38h: digitos BCD 7 y 8 del importe (Data 1) y del volumen (Data 2) de la venta
+function TSQLW2Reader.LeeDigitos78(xPosCarga: integer;
+  var xPesos, xLitros: integer): boolean;
+var DataBlock,sResp,ss:string;
+begin
+  result:=false;
+  DataBlock:=EmpacaWayne(char(ControlByte(xPosCarga,7))+#56+#0+#0+#0);   // 0F 38 00 00 00
+  if SegmActual=1 then begin
+    if not ( ( TransmiteComando1(DataBlock) ) and ( length(sRespuesta)=13 ) ) then
+      Exit;
+    sResp:=DesempacaWayne(sRespuesta);
+  end
+  else begin
+    if not ( ( TransmiteComando2(DataBlock) ) and ( length(sRespuesta2)=13 ) ) then
+      Exit;
+    sResp:=DesempacaWayne(sRespuesta2);
+  end;
+  if sResp='' then
+    Exit;
+  ss:=StrToHexSep(sResp);
+  xPesos:=Round(ExtraeBCD(ss,3,3));
+  xLitros:=Round(ExtraeBCD(ss,4,4));
+  result:=true;
+end;
+
+// El importe y el volumen llegan en 6 digitos BCD. Con protocolo extendido la bomba
+// da los digitos 7 y 8; si no, las vueltas se deducen del volumen y el precio.
 procedure TSQLW2Reader.CorrigeDesbordeImporte(xPosCarga: integer;
   var rLitros, rPrecio, rPesos: real);
 var xLitros,xVuelta:real;
-    k:integer;
+    k,xAltoPesos,xAltoLitros:integer;
 begin
   if not LeeVolumen(xPosCarga,xLitros) then
     Exit;
   rLitros:=xLitros;
   xVuelta:=dividefloat(1000000,TPoscarga[xPosCarga].DivImporte);
-  k:=Round(dividefloat(rLitros*rPrecio-rPesos,xVuelta));
+  if ProtocoloExtendido and LeeDigitos78(xPosCarga,xAltoPesos,xAltoLitros) then begin
+    rLitros:=rLitros+xAltoLitros*dividefloat(1000000,TPoscarga[xPosCarga].DivLitros);
+    k:=xAltoPesos;
+  end
+  else
+    k:=Round(dividefloat(rLitros*rPrecio-rPesos,xVuelta));
   if k>0 then begin
     AgregaLog('Importe desbordado Pos '+inttostr(xPosCarga)+': '+FormatFloat('0.00',rPesos)+
               ' -> '+FormatFloat('0.00',rPesos+k*xVuelta));
@@ -1970,8 +2026,11 @@ begin
       Exit;
     end;
     PonPuertoPos(xPosCarga);
-    if xTipoPreset=1 then begin  // Pesos
-      stComando:= char(ControlByte(xPosCarga,7))+#33+ConvierteBCD(xValor*WtwDivImporte,6);
+    if xTipoPreset=1 then begin  // Pesos: Ext 39h binario de 7 digitos o Ext 21h BCD de 6
+      if ProtocoloExtendido then
+        stComando:= char(ControlByte(xPosCarga,7))+#57+ConvierteBinario(xValor*WtwDivImporte,3)
+      else
+        stComando:= char(ControlByte(xPosCarga,7))+#33+ConvierteBCD(xValor*WtwDivImporte,6);
       DataBlock:=EmpacaWayne(stComando);
       if SegmActual=1 then begin
         if ( ( TransmiteComando1(DataBlock) ) and ( length(sRespuesta)=13 ) ) then
@@ -1982,8 +2041,11 @@ begin
           result:=true;
       end;
     end
-    else if xTipoPreset=2 then begin  // Litros
-      stComando:= char(ControlByte(xPosCarga,7))+#35+ConvierteBCD(xValor*WtwDivLitros,6);
+    else if xTipoPreset=2 then begin  // Litros: Ext 3Bh binario de 7 digitos o Ext 23h BCD de 6
+      if ProtocoloExtendido then
+        stComando:= char(ControlByte(xPosCarga,7))+#59+ConvierteBinario(xValor*WtwDivLitros,3)
+      else
+        stComando:= char(ControlByte(xPosCarga,7))+#35+ConvierteBCD(xValor*WtwDivLitros,6);
       DataBlock:=EmpacaWayne(stComando);
       if SegmActual=1 then begin
         if ( ( TransmiteComando1(DataBlock) ) and ( length(sRespuesta)=13 ) ) then
@@ -2385,7 +2447,7 @@ begin
                 end
                 else
                   xImporte:=StrToFLoat(SnImporteStr);
-                rsp:=ValidaCifra(xImporte,4,2);
+                rsp:=ValidaCifra(xImporte,EnterosPresetPesos,2);
                 xlitrosconv:=0;
                 swventalibre:=false;
                 if rsp='Valor excede maximo permitido' then
@@ -2406,7 +2468,7 @@ begin
                     xcomb:=StrToIntDef(ss,0);
                     xp:=PosicionDeCombustible(xpos,xcomb);
                     TPosCarga[xpos].Esperafinventa:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,5,' '),0);
-                    // Importe mayor a 9999.99: se prefija su equivalente en litros
+                    // Importe mayor al maximo de preset: se prefija su equivalente en litros
                     if xlitrosconv>0 then begin
                       xtipopre:=2;
                       xvalorpre:=xlitrosconv;
@@ -2478,7 +2540,7 @@ begin
                 end
                 else
                   xLitros:=StrToFLoat(SnImporteStr);
-                rsp:=ValidaCifra(xLitros,3,2);
+                rsp:=ValidaCifra(xLitros,EnterosPresetLitros,2);
                 if rsp='OK' then
                   if (xLitros<0.10) then
                     xLitros:=999;
@@ -2745,8 +2807,8 @@ begin
   end;
 end;
 
-// El protocolo Wayne solo admite presets de importe hasta 9999.99, pero en litros
-// admite hasta 999.99; se calcula el equivalente en litros con el precio leido del
+// Un importe mayor al maximo de preset se prefija en litros (cuyo maximo es
+// EnterosPresetLitros); se calcula el equivalente con el precio leido del
 // dispensario, truncado a 2 decimales para no despachar mas del importe solicitado.
 function TSQLW2Reader.ConvierteImporteALitros(xpos, xcomb: integer;
   ximporte: real; var xlitros: real): string;
@@ -2754,7 +2816,7 @@ var xp:integer;
     xprecio:real;
 begin
   xlitros:=0;
-  result:='Importe excede maximo de preset (9999.99)';
+  result:='Importe excede maximo de preset ('+FormatFloat('0.00',IntPower(10,EnterosPresetPesos)-0.01)+')';
   try
     xp:=PosicionDeCombustible(xpos,xcomb);
     if not (xp in [1..TPosCarga[xpos].NoComb]) then begin
@@ -2767,8 +2829,9 @@ begin
       exit;
     end;
     xlitros:=Trunc(ximporte*100/xprecio+0.000001)/100;
-    if (ValidaCifra(xlitros,3,2)<>'OK') or (xlitros<0.10) then begin
-      result:=result+' y su equivalente '+FormatFloat('0.00',xlitros)+' lts excede 999.99';
+    if (ValidaCifra(xlitros,EnterosPresetLitros,2)<>'OK') or (xlitros<0.10) then begin
+      result:=result+' y su equivalente '+FormatFloat('0.00',xlitros)+' lts excede '+
+              FormatFloat('0.00',IntPower(10,EnterosPresetLitros)-0.01);
       xlitros:=0;
       exit;
     end;
@@ -2789,8 +2852,8 @@ procedure TSQLW2Reader.IniciaVigilanciaPreset(xPosCarga: integer);
 begin
   with TPosCarga[xPosCarga] do begin
     SwVigilaPreset:=DetenerPresetExcedido and
-                    (((TipoPreset=1) and (ValorPreset>0) and (ValorPreset<9999)) or
-                     ((TipoPreset=2) and (ValorPreset>0) and (ValorPreset<999)));
+                    (((TipoPreset=1) and (ValorPreset>0) and (ValorPreset<>9999)) or
+                     ((TipoPreset=2) and (ValorPreset>0) and (ValorPreset<>999)));
     TipoPresetVenta:=TipoPreset;
     ValorPresetVenta:=ValorPreset;
   end;
