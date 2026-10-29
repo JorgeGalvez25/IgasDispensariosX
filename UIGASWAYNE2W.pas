@@ -2299,7 +2299,7 @@ begin
     MangPresetVehiculo:=xmang;
     PesosPresetVehiculo:=pesos;
     LitrosPresetVehiculo:=litros;
-    ValorFlujoOriginal:=(80000 + xpos*100 + xmang*10 + TAdicf[xpos,xmang])/100;
+    ValorFlujoOriginal:=(80000 + xpos*100 + IfThen(NoComb=1, 0, xmang*10) + TAdicf[xpos,xmang])/100;
     AgregaLog('Flujo original guardado Pos: '+IntToStr(xpos)+
       ' Manguera: '+IntToStr(xmang)+' Preset: '+FormatoMoneda(ValorFlujoOriginal));
     if (PosFlu=xpos) and (StFlu in [1,2,11,12]) then begin
@@ -2311,7 +2311,7 @@ begin
     HoraPresetVehiculo:=Now;
     PasoPresetVehiculo:=pvEsperaEspecial;
     if not EnviaPresetFluAct(xpos, xmang,
-        (80000 + xpos*100 + xmang*10 + flujovehiculo)/100) then begin
+        (80000 + xpos*100 + IfThen(NoComb=1, 0, xmang*10) + flujovehiculo)/100) then begin
       PasoPresetVehiculo:=pvError;
       Result:='No se pudo prefijar/autorizar flujo por vehiculo';
     end;
@@ -3195,7 +3195,7 @@ begin
                               FluAct:=False
                             else begin
                               if EnviaPresetFluAct(PosCiclo,FluActMang,
-                                  (80000 + PosCiclo*100 + FluActMang*10 +
+                                  (80000 + PosCiclo*100 + IfThen(NoComb=1, 0, FluActMang*10) +
                                    TAdicf[PosCiclo,FluActMang])/100) then
                                 HoraPresetFluAct:=Now
                               else
