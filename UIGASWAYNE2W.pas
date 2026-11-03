@@ -142,7 +142,7 @@ type
     function  DameTotal(xPosCarga,xPos : integer; var rTotalLitros: real) : boolean;
     function  Autoriza(xPosCarga: integer) : boolean;
     function  AutorizaPm(xPosCarga,xPm: integer) : boolean;
-    function  EnviaPresetPesosBomba(xPosCarga,xTipoPreset: integer; xValor: real) : boolean;
+    function  EnviaPresetPesosBomba(xPosCarga,xTipoPreset: integer; xValor: real; xPermiteExtendido: boolean = true) : boolean;
     procedure ProcesaComandos;
     function ValidaCifra(xvalor:real;xenteros,xdecimales:byte):string;
     function ConvierteImporteALitros(xpos,xcomb:integer;ximporte:real;var xlitros:real):string;
@@ -2013,7 +2013,7 @@ begin
 end;
 
 function TSQLW2Reader.EnviaPresetPesosBomba(xPosCarga,
-  xTipoPreset: integer; xValor: real): boolean;
+  xTipoPreset: integer; xValor: real; xPermiteExtendido: boolean): boolean;
 var DataBlock,
     stComando :string;
 begin
@@ -2027,7 +2027,7 @@ begin
     end;
     PonPuertoPos(xPosCarga);
     if xTipoPreset=1 then begin  // Pesos: Ext 39h binario de 7 digitos o Ext 21h BCD de 6
-      if ProtocoloExtendido then
+      if ProtocoloExtendido and xPermiteExtendido then
         stComando:= char(ControlByte(xPosCarga,7))+#57+ConvierteBinario(xValor*WtwDivImporte,3)
       else
         stComando:= char(ControlByte(xPosCarga,7))+#33+ConvierteBCD(xValor*WtwDivImporte,6);
@@ -2042,7 +2042,7 @@ begin
       end;
     end
     else if xTipoPreset=2 then begin  // Litros: Ext 3Bh binario de 7 digitos o Ext 23h BCD de 6
-      if ProtocoloExtendido then
+      if ProtocoloExtendido and xPermiteExtendido then
         stComando:= char(ControlByte(xPosCarga,7))+#59+ConvierteBinario(xValor*WtwDivLitros,3)
       else
         stComando:= char(ControlByte(xPosCarga,7))+#35+ConvierteBCD(xValor*WtwDivLitros,6);
@@ -2096,7 +2096,7 @@ begin
       ximporte:=StrToIntDef(ValorOff,0)/100;
     AgregaLog('Preset flujo Posicion '+inttoclavenum(xpos,2)+' $'+FormatoMoneda(ximporte));
     EsperaMiliseg(50);
-    if EnviaPresetPesosBomba(xpos,1,ximporte) then begin
+    if EnviaPresetPesosBomba(xpos,1,ximporte,false) then begin  // Presets de flujo siempre en BCD de 6 digitos
       EsperaMiliseg(50);
       if Autoriza(xpos) then
         result:=true;
@@ -2162,7 +2162,7 @@ begin
     AgregaLog('Preset especial Posicion '+inttoclavenum(xpos,2)+
       ' Manguera '+IntToStr(xmang)+' $'+FormatoMoneda(rpesos));
     EsperaMiliseg(50);
-    if EnviaPresetPesosBomba(xpos,1,rpesos) then begin
+    if EnviaPresetPesosBomba(xpos,1,rpesos,false) then begin  // Presets de flujo siempre en BCD de 6 digitos
       EsperaMiliseg(50);
       if Autoriza(xpos) then
         result:=true;
@@ -2299,7 +2299,7 @@ begin
     MangPresetVehiculo:=xmang;
     PesosPresetVehiculo:=pesos;
     LitrosPresetVehiculo:=litros;
-    ValorFlujoOriginal:=(80000 + xpos*100 + IfThen(NoComb=1, 0, xmang*10) + TAdicf[xpos,xmang])/100;
+    ValorFlujoOriginal:=(80000 + xpos*100 + TAdicf[xpos,xmang])/100;
     AgregaLog('Flujo original guardado Pos: '+IntToStr(xpos)+
       ' Manguera: '+IntToStr(xmang)+' Preset: '+FormatoMoneda(ValorFlujoOriginal));
     if (PosFlu=xpos) and (StFlu in [1,2,11,12]) then begin
@@ -2311,7 +2311,7 @@ begin
     HoraPresetVehiculo:=Now;
     PasoPresetVehiculo:=pvEsperaEspecial;
     if not EnviaPresetFluAct(xpos, xmang,
-        (80000 + xpos*100 + IfThen(NoComb=1, 0, xmang*10) + flujovehiculo)/100) then begin
+        (80000 + xpos*100 + flujovehiculo)/100) then begin
       PasoPresetVehiculo:=pvError;
       Result:='No se pudo prefijar/autorizar flujo por vehiculo';
     end;
@@ -3195,7 +3195,7 @@ begin
                               FluAct:=False
                             else begin
                               if EnviaPresetFluAct(PosCiclo,FluActMang,
-                                  (80000 + PosCiclo*100 + IfThen(NoComb=1, 0, FluActMang*10) +
+                                  (80000 + PosCiclo*100 +
                                    TAdicf[PosCiclo,FluActMang])/100) then
                                 HoraPresetFluAct:=Now
                               else
