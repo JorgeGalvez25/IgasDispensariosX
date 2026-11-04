@@ -1,6 +1,6 @@
 object SQLHReader: TSQLHReader
   OldCreateOrder = False
-  DisplayName = 'OpenGas Dispensarios'
+  DisplayName = 'SQL Server VSS Reader'
   OnExecute = ServiceExecute
   OnStop = ServiceStop
   Left = 331
