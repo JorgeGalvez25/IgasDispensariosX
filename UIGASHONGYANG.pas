@@ -48,6 +48,7 @@ type
     estado:Integer;
     ListaCmnd    :TStrings;
     confPos:string;
+    ConfAdic:string;
     modoPreset:Boolean;
     PermiteModoNormal:Boolean;
     FolioCmnd   :integer;
@@ -82,6 +83,7 @@ type
     function ComandoV(xaddr,xlado:integer):string;
     function ComandoS(xaddr,xlado,ximporte:integer):string;
     function ComandoL(xaddr,xlado,xlitros:integer):string;
+    function ComandoW(xaddr,xlado:integer;xvalor:real):string;
     procedure ComandoConsola(ss:string);
     function EjecutaComando(xCmnd:string):integer;
     procedure AutorizarVenta(folio:Integer; msj:string);
@@ -122,6 +124,8 @@ type
    procedure IniciarPrecios;
    procedure Bloquear(folio:Integer; msj:string);
    procedure Desbloquear(folio:Integer; msj:string);
+   procedure FluStd(folio:Integer; msj:string);
+   procedure FluMin(folio:Integer);
    procedure GuardaLogComandos;
    function Encrypt(data,key3DES:string):string;
    function Decrypt(data,key3DES:string):string;
@@ -187,6 +191,7 @@ type
        SwVentaValidada,
        swcargapreset,
        SwEnllavado,
+       SwAdic,
        SwActivo    :boolean;
        TipoPago,
        FinVenta,
@@ -219,7 +224,7 @@ type
   TMetodos = (
     NOTHING_e, INITIALIZE_e, PARAMETERS_e, LOGIN_e, LOGOUT_e, PRICES_e, AUTHORIZE_e, SELFSERVICE_e, FULLSERVICE_e,
     PAYMENT_e, TRANSACTION_e, STATUS_e, TOTALS_e, HALT_e, RUN_e, SHUTDOWN_e, TERMINATE_e, STATE_e,
-    TRACE_e, SAVELOGREQ_e, RESPCMND_e, LOG_e, LOGREQ_e, BLOCK_e, UNBLOCK_e);
+    TRACE_e, SAVELOGREQ_e, RESPCMND_e, LOG_e, LOGREQ_e, BLOCK_e, UNBLOCK_e, FLUSTD_e, FLUMIN_e);
 
 
 var
@@ -253,6 +258,8 @@ var
   LinEstadoGen :string;
   Sw47:boolean;
   Licencia3Ok:boolean;
+  TAdicf:array[1..32,1..3] of real; // Flujo estandar por posicion y manguera
+  StAdic:integer;                   // -1 sin flujo, 0 minimo, 1 estandar
 
 implementation
 
@@ -287,6 +294,8 @@ begin
     confPos:=config.ReadString('CONF','ConfPos','');
     modoPreset:=config.ReadString('CONF','ModoPreset','Si')='Si';
     PermiteModoNormal:=config.ReadString('CONF','PermiteModoNormal','No')='Si';
+    ConfAdic:=config.ReadString('CONF','ConfAdic','');
+    StAdic:=-1;
     licencia:=config.ReadString('CONF','Licencia','');
     GSentinelKey:=licencia;
     minutosLog:=StrToInt(config.ReadString('CONF','MinutosLog','0'));
@@ -462,6 +471,10 @@ begin
           Bloquear(folio, parametro);
         UNBLOCK_e:
           Desbloquear(folio, parametro);
+        FLUSTD_e:
+          FluStd(folio, parametro);
+        FLUMIN_e:
+          FluMin(folio);
         LOG_e:
           ObtenerLog(folio, StrToIntDef(parametro, 0));
         LOGREQ_e:
@@ -831,6 +844,7 @@ begin
       IniciaCarga:=false;
       SwPrepagoM:=True;
       SwEnllavado:=false;
+      SwAdic:=false;
       SwPreset:=false;
       ActualizarPrecio:=false;
       LeerPrecio:=false;
@@ -1167,9 +1181,18 @@ begin
   result:=ss+CalculaBCC(ss);
 end;
 
+function TSQLHReader.ComandoW(xaddr,xlado:integer;xvalor:real):string; // Porcentaje de flujo
+// 6%, Addr 03, lado 02
+// Send  03 06 02 01 00 06 EE
+var ss:string;
+begin
+  ss:=char(xaddr)+char(6)+char(xlado)+char(1)+ConvierteBCD(xvalor,4);
+  result:=ss+CalculaBCC(ss);
+end;
+
 procedure TSQLHReader.ComandoConsola(ss: string);
 var s1,s2:string;
-    xmang,xprecio,ximporte,xlitros:integer;
+    xmang,xprecio,ximporte,xlitros,xvalor:integer;
 begin
   try
     LinCmnd:=ss;
@@ -1222,6 +1245,12 @@ begin
               xlitros:=strtointdef(copy(LinCmnd,4,6),0);
               if xmang in [1..MaxMangueras] then with TMangueras[xmang] do
                 LinCmndHJ:=ComandoL(address,lado,xlitros);
+            end;
+        'W':begin
+              xmang:=strtointdef(copy(LinCmnd,2,2),0);
+              xvalor:=strtointdef(copy(LinCmnd,4,4),0);
+              if xmang in [1..MaxMangueras] then with TMangueras[xmang] do
+                LinCmndHJ:=ComandoW(address,lado,xvalor/100);
             end;
         else exit;
       end;
@@ -1461,6 +1490,15 @@ begin
         estatus:=1;
         swfinventa:=false;
         AgregaLog('>>Salio de FINV '+inttostr(MangCmnd));
+      end;
+      // Flujo vigente al quedar inactiva (o pendiente por FLUSTD/FLUMIN) y al iniciar despacho
+      if (StAdic>=0)and(PosCarga in [1..32])and(PosComb in [1..3])and
+         (((estatus=1)and((estatusant>1)or(SwAdic)))or((estatus=5)and(estatusant<>5))) then begin
+        SwAdic:=false;
+        if StAdic=1 then
+          MeteACola('W'+IntToClaveNum(MangCmnd,2)+IntToClaveNum(Trunc(TAdicf[PosCarga,PosComb]*100+0.5),4))
+        else
+          MeteACola('W'+IntToClaveNum(MangCmnd,2)+IntToClaveNum(0,4));
       end;
       case estatus of
         1:begin  // Inactivo
@@ -2016,7 +2054,7 @@ begin
           'A':begin
                 if MangCiclo<=MaxMangueras then with TMangueras[MangCiclo] do begin
                   if ContParo<=0 then begin
-                    if (ContBrinca<=0)or(Estatus>1)or(SwPreset) then begin
+                    if (ContBrinca<=0)or(Estatus>1)or(SwPreset)or(SwAdic) then begin
                       if (Estatus=1) and (not modoPreset) then
                         ContBrinca:=4
                       else
@@ -2319,6 +2357,31 @@ begin
 //            rsp:='Posicion no esta en fin de venta';
 //        end;
       end
+      // CMND: ACTIVA FLUJO ESTANDAR
+      else if ss='FLUSTD' then begin
+        StAdic:=1;
+        for xmang:=1 to MaxMangueras do
+          TMangueras[xmang].SwAdic:=true;
+        rsp:='OK';
+      end
+      // CMND: ACTIVA FLUJO MINIMO, responde cuando todas las mangueras con comunicacion ya lo recibieron
+      else if ss='FLUMIN' then begin
+        SwAplicaCmnd:=False;
+        if TabCmnd[xcmnd].SwNuevo then begin
+          StAdic:=0;
+          for xmang:=1 to MaxMangueras do
+            TMangueras[xmang].SwAdic:=true;
+          TabCmnd[xcmnd].SwNuevo:=false;
+        end
+        else if ApCola=0 then begin
+          SwAplicaCmnd:=True;
+          for xmang:=1 to MaxMangueras do
+            if (TMangueras[xmang].SwAdic)and(TMangueras[xmang].estatus>0) then
+              SwAplicaCmnd:=False;
+          if SwAplicaCmnd then
+            rsp:='OK';
+        end;
+      end
       else rsp:='Comando no Soportado o no Existe';
       if SwAplicaCmnd then begin
         TabCmnd[xcmnd].SwResp:=true;
@@ -2501,6 +2564,8 @@ begin
     if modoPreset then
       for xpos:=1 to MaxPosiciones do
         AplicaModoOpera(xpos,TPosCarga[xpos].ModoOpera);
+    if ConfAdic<>'' then
+      FluStd(0, ConfAdic);
     AddPeticionJSON(folio, 'True|');
   except
     on e:Exception do
@@ -2805,6 +2870,64 @@ begin
     on e:Exception do
       AddPeticionJSON(folio, 'False|Excepcion: '+e.Message+'|');
   end;
+end;
+
+// Guarda en el ini el flujo estandar (pos:mang1,mang2,mang3;...) y encola el comando que lo aplica
+procedure TSQLHReader.FluStd(folio:Integer; msj: string);
+var
+  i,j,xpos:Integer;
+  mangueras:string;
+  config:TIniFile;
+begin
+  if Licencia3Ok then begin
+    try
+      AgregaLog('Mensaje adic: '+msj);
+      if folio>0 then begin
+        config:=TIniFile.Create(ExtractFilePath(ParamStr(0))+'PDISPENSARIOS.ini');
+        try
+          config.WriteString('CONF','ConfAdic',msj);
+        finally
+          config.Free;
+        end;
+        ConfAdic:=msj;
+      end;
+
+      for i:=1 to NoElemStrSep(msj,';') do begin
+        if ExtraeElemStrSep(msj,i,';')='' then Continue;
+        xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
+        if not (xpos in [1..32]) then
+          raise Exception.Create('Posicion no valida: '+IntToStr(xpos));
+        mangueras:=ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':');
+        for j:=1 to NoElemStrSep(mangueras,',') do
+          if (j<=3)and(ExtraeElemStrSep(mangueras,j,',')<>'') then
+            TAdicf[xpos,j]:=StrToFloat(ExtraeElemStrSep(mangueras,j,','));
+        AgregaLog('Pos '+IntToStr(xpos)+' Flu1: '+FloatToStr(TAdicf[xpos,1])+', Flu2: '+FloatToStr(TAdicf[xpos,2])+', Flu3: '+FloatToStr(TAdicf[xpos,3]));
+      end;
+
+      AddPeticionJSON(folio, 'True|'+IntToStr(EjecutaComando('FLUSTD'))+'|');
+    except
+      on e:Exception do begin
+        AgregaLog('Error FLUSTD: '+e.Message);
+        AddPeticionJSON(folio, 'False|Error FLUSTD: '+e.Message+'|');
+      end;
+    end;
+  end
+  else
+    AddPeticionJSON(folio, 'False|Licencia CVL7 invalida|');
+end;
+
+procedure TSQLHReader.FluMin(folio:Integer);
+begin
+  if Licencia3Ok then begin
+    try
+      AddPeticionJSON(folio, 'True|'+IntToStr(EjecutaComando('FLUMIN'))+'|');
+    except
+      on e:Exception do
+        AddPeticionJSON(folio, 'False|Error FLUMIN: '+e.Message+'|');
+    end;
+  end
+  else
+    AddPeticionJSON(folio, 'False|Licencia CVL7 invalida|');
 end;
 
 procedure TSQLHReader.GuardaLogComandos;
