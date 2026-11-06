@@ -16,7 +16,7 @@ object SQLHReader: TSQLHReader
   end
   object Timer1: TTimer
     Enabled = False
-    Interval = 40
+    Interval = 15
     OnTimer = Timer1Timer
     Left = 48
     Top = 96
