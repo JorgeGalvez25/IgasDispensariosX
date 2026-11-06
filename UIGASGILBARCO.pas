@@ -2353,14 +2353,10 @@ var
   distintos: array[0..99] of integer;
   nDist, xpos, xmang, i, g, costo, mejorCosto, nPos: integer;
   mejorG: integer;
-  mejorM, mv: array[1..3] of integer;
-  hayMang: array[1..3] of boolean;
 
   function Base(p, m: integer): integer;
   begin
-    if mv[m] >= 0 then
-      Result := mv[m]
-    else if g >= 0 then
+    if g >= 0 then
       Result := g
     else
       Result := TAplicado8[p, m];
@@ -2396,14 +2392,11 @@ var
 
   function CostoTotal: integer;
   var
-    p, m, vpos: integer;
+    p, vpos: integer;
   begin
     Result := 0;
     if g >= 0 then
       inc(Result);
-    for m := 1 to 3 do
-      if mv[m] >= 0 then
-        inc(Result);
     for p := 1 to nPos do
       inc(Result, CostoPos(p, vpos));
   end;
@@ -2440,13 +2433,11 @@ var
   end;
 
 var
-  vpos, gi, i1, i2, i3: integer;
+  vpos, gi: integer;
 begin
   NCola8 := 0;
   nPos := Min(MaxPosCarga, MaxPos8);
   nDist := 0;
-  for xmang := 1 to 3 do
-    hayMang[xmang] := False;
   for xpos := 1 to nPos do
     for xmang := 1 to 3 do
       objetivo[xpos, xmang] := -2;
@@ -2471,53 +2462,28 @@ begin
           Continue;
         end;
         objetivo[xpos, xmang] := ValorObjetivo8(xpos, xmang);
-        hayMang[xmang] := True;
         AgregaDistinto(objetivo[xpos, xmang]);
       end;
     end;
 
-  // Busca la combinacion de general (17,5) y por manguera (17,M) con menos comandos
+  // Busca si conviene un comando general (17,5) con menos comandos en total
   mejorCosto := MaxInt;
   mejorG := -1;
-  for xmang := 1 to 3 do
-    mejorM[xmang] := -1;
   for gi := 0 to nDist do
   begin
     g := Candidato(gi);
-    for i1 := 0 to IfThen(hayMang[1], nDist, 0) do
+    costo := CostoTotal;
+    if costo < mejorCosto then
     begin
-      mv[1] := Candidato(i1);
-      if (mv[1] >= 0) and (mv[1] = g) then Continue;
-      for i2 := 0 to IfThen(hayMang[2], nDist, 0) do
-      begin
-        mv[2] := Candidato(i2);
-        if (mv[2] >= 0) and (mv[2] = g) then Continue;
-        for i3 := 0 to IfThen(hayMang[3], nDist, 0) do
-        begin
-          mv[3] := Candidato(i3);
-          if (mv[3] >= 0) and (mv[3] = g) then Continue;
-          costo := CostoTotal;
-          if costo < mejorCosto then
-          begin
-            mejorCosto := costo;
-            mejorG := g;
-            for xmang := 1 to 3 do
-              mejorM[xmang] := mv[xmang];
-          end;
-        end;
-      end;
+      mejorCosto := costo;
+      mejorG := g;
     end;
   end;
 
-  // Arma la cola: general, por manguera, por posicion y por manguera de la posicion
+  // Arma la cola: general (17,5), por posicion y por manguera de la posicion
   g := mejorG;
-  for xmang := 1 to 3 do
-    mv[xmang] := mejorM[xmang];
   if g >= 0 then
     Agrega(PosTodas8, MangTodas8, g);
-  for xmang := 1 to 3 do
-    if mv[xmang] >= 0 then
-      Agrega(PosTodas8, xmang, mv[xmang]);
   for xpos := 1 to nPos do
   begin
     CostoPos(xpos, vpos);
