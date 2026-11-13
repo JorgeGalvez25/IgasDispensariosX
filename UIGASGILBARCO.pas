@@ -180,6 +180,8 @@ type
     procedure CalculaCola8;
     procedure AplicaCmnd8(const cmd: TCmnd8);
     procedure ProcesaFlujo8(xpos: integer);
+    procedure ProgramaReaplicaFluAct(xpos, xmang: integer);
+    procedure ReaplicaFluAct(xpos: integer);
     procedure EstatusDispensarios;
     procedure ProcesaComandos;
     procedure AvanzaPosCiclo;
@@ -236,6 +238,7 @@ type
     FluActConfigurado: array[1..3] of Boolean; // distingue cero explicito de ausencia de FLUACT
     FluActMang: Integer;         // manguera de FLUACT en proceso (0 = ninguna)
     HoraPresetFluAct: TDateTime; // marca de tiempo del preset/autorizacion de esa manguera
+    HoraReaplicaFluAct: array[1..3] of TDateTime; // proxima reaplicacion del porcentaje (0 = sin programar)
     swflujovehiculo: Boolean;    // hay un flujo por vehiculo pendiente de cerrar
     flujovehiculo: Integer;      // digito de vehiculo (0-9) extraido del OCC/OCL
     // Secuencia por posicion; constantes pv* describen cada etapa.
@@ -409,6 +412,7 @@ begin
     for i := 1 to 32 do
       for j := 1 to 3 do
         TAplicado8[i, j] := -1;
+    Randomize;
     ListaCmnd := TStringList.Create;
     detenido := True;
     estado := -1;
@@ -1199,6 +1203,7 @@ begin
           TAdicf[i, j] := 0;
           FluActPendiente[j] := False;
           FluActConfigurado[j] := False;
+          HoraReaplicaFluAct[j] := 0;
         end;
         DivImporte := GtwDivImporte;
         DivLitros := GtwDivLitros;
@@ -2511,7 +2516,41 @@ begin
     if (cmd.BB = PosTodas8) or (cmd.BB = xpos) then
       for xmang := 1 to 3 do
         if (cmd.M = MangTodas8) or (cmd.M = xmang) then
+        begin
           TAplicado8[xpos, xmang] := cmd.Valor;
+          ProgramaReaplicaFluAct(xpos, xmang);
+        end;
+end;
+
+// Cada manguera se reaplica entre 60 y 63 minutos despues de aplicarse
+procedure TSQLGReader.ProgramaReaplicaFluAct(xpos, xmang: integer);
+begin
+  TPosCarga[xpos].HoraReaplicaFluAct[xmang] := IncSecond(Now, 3600 + Random(181));
+end;
+
+procedure TSQLGReader.ReaplicaFluAct(xpos: integer);
+var
+  xmang: integer;
+begin
+  if not (TipoClb[1] in ['5', '8']) then
+    Exit;
+  with TPosCarga[xpos] do
+    for xmang := 1 to 3 do
+      if (HoraReaplicaFluAct[xmang] > 0) and (Now >= HoraReaplicaFluAct[xmang]) then
+      begin
+        HoraReaplicaFluAct[xmang] := 0;
+        AgregaLog('Reaplica FLUACT Pos: ' + IntToStr(xpos) + ' Manguera: ' + IntToStr(xmang));
+        if TipoClb[1] = '8' then
+        begin
+          TAplicado8[xpos, xmang] := -1;
+          Recalcula8 := True;
+        end
+        else
+        begin
+          FluActPendiente[xmang] := True;
+          FluAct := True;
+        end;
+      end;
 end;
 
 procedure TSQLGReader.ProcesaFlujo8(xpos: integer);
@@ -2901,6 +2940,7 @@ begin
                         // No usar el estado anterior cuando falla la consulta.
                         ProcesaPresetVehiculo(PosCiclo, estatusRecibido);
                         if PasoPresetVehiculo = pvLibre then begin
+                        ReaplicaFluAct(PosCiclo);
                         Case TipoClb[1] of
                           '2':begin
                                 if (Estatus=1)and(StFluPos=1)and(swflu) then begin   // Sube
@@ -2973,6 +3013,7 @@ begin
                             if DetenerDespacho(PosCiclo) then begin
                               AgregaLog('Se detuvo despacho fluact Pos: '+IntToStr(PosCiclo)+' Manguera: '+IntToStr(FluActMang));
                               FluActPendiente[FluActMang] := False;
+                              ProgramaReaplicaFluAct(PosCiclo, FluActMang);
                               // Conservar el porcentaje base para restaurarlo tras una venta.
                               FluActMang := 0;
                             end;
