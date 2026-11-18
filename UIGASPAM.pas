@@ -201,6 +201,7 @@ type
        flujovehiculo  :integer;
        esDiesel:Boolean;
        HoraPresetFlu:TDateTime;
+       HoraReaplicaFluAct:TDateTime; // proxima reaplicacion de FLUACT (0 = sin programar)
        HoraTotales:TDateTime;
      end;
 
@@ -290,6 +291,7 @@ begin
     GSentinelKey:=licencia;
     minutosLog:=StrToInt(config.ReadString('CONF','MinutosLog','0'));
     ListaCmnd:=TStringList.Create;
+    Randomize;
     ServerSocket1.Active:=True;
     detenido:=True;
     estado:=-1;
@@ -856,6 +858,12 @@ begin
                          SwOcc:=false;
                          ContOcc:=0;
                        end;
+                       // FLUACT se reaplica entre 60 y 63 minutos despues de aplicarse
+                       if (TipoClb='5') and (HoraReaplicaFluAct>0) and (Now>=HoraReaplicaFluAct) then begin
+                         HoraReaplicaFluAct:=0;
+                         AgregaLog('Reaplica FLUACT Pos: '+IntToStr(xpos));
+                         FluAct:=True;
+                       end;
                        if (FluAct) and (SwFlu) then begin
                          if (TAdic31[xpos]>0) or (FluMin) then begin
                            xprodauto:='000000';
@@ -929,6 +937,8 @@ begin
                          end;
                          FluAct:=False;
                          SwFlu:=False;
+                         if TipoClb='5' then
+                           HoraReaplicaFluAct:=IncSecond(Now,3600+Random(181));
                        end
                        else if (FluStd) and (SwFlu) then begin
                          ss:='P'+IntToClaveNum(xpos,2)+'0'+'1'+'000937150';
@@ -2329,6 +2339,7 @@ begin
       SwOCC:=false;
       ContOcc:=0;
       HoraPresetFlu:=0;
+      HoraReaplicaFluAct:=0;
     end;
 
     for i:=0 to posiciones.Count-1 do begin
