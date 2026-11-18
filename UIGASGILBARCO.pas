@@ -93,6 +93,7 @@ type
     TipoClb: string;
     ConfAdic: string;
     DieselAdic: Boolean;
+    FluMinCero: Boolean;
     PermiteModoNormal: Boolean;
 
     GtwDivPresetLts,        // Divisor preset litros           **
@@ -176,6 +177,8 @@ type
     function ValorObjetivo8(xpos, xmang: integer): integer;
     function CodigoProteccion8(const valores: string): integer;
     function Cola8Ocupada: boolean;
+    function FluActOcupado: boolean;
+    procedure ActivaFluActTodas;
     function HayFlujoVehiculo: boolean;
     procedure CalculaCola8;
     procedure AplicaCmnd8(const cmd: TCmnd8);
@@ -296,6 +299,7 @@ var
   StFlu,PosFlu,StCiclo,CombPendiente:integer;
   SwEspMinimoCerrar:Boolean;
   FlujoPorVehiculo:Boolean;
+  FluMin5:Boolean;
   // TipoClb 8
   ProtGilbarco: Integer;                        // proteccion 0 ninguna, 1 5 lts, 2 10 lts, 3 20 lts, 4 20 lts con curva
   FluMin8: Boolean;                             // flujo en minimo (0%)
@@ -405,6 +409,8 @@ begin
     TipoClb := config.ReadString('CONF', 'TipoClb', '1');
     ConfAdic := config.ReadString('CONF', 'ConfAdic', '');
     DieselAdic := UpperCase(config.ReadString('CONF', 'DieselAdic', ''))='SI';
+    FluMinCero := UpperCase(config.ReadString('CONF', 'FluMinCero', ''))='SI';
+    FluMin5 := False;
     FlujoPorVehiculo := UpperCase(config.ReadString('CONF', 'FlujoPorVehiculo', ''))='SI';
     ProtGilbarco := StrToIntDef(config.ReadString('CONF', 'ProtGilbarco', '0'), 0);
     if not (ProtGilbarco in [0..4]) then
@@ -1502,6 +1508,14 @@ begin
                    for xpos:=1 to MaxPosCarga do
                      TPosCarga[xpos].StFluPos:=1;
                  end;
+             '5':begin
+                   if FluMinCero then begin
+                     FluMin5:=False;
+                     ActivaFluActTodas;
+                   end
+                   else
+                     StFlu:=1;
+                 end;
              '8':begin  // Porcentajes de ConfAdic con presets 9,BB,M,P,%
                    FluMin8:=False;
                    Recalcula8:=True;
@@ -1513,6 +1527,12 @@ begin
           end;
         end
 //        // CMND: FLU OFF
+        else if (ss='FLUMIN') and (TipoClb[1]='5') and FluMinCero then begin
+          FluMin5:=True;
+          SwEspMinimoCerrar:=True;
+          ActivaFluActTodas;
+          rsp:='OK';
+        end
         else if (ss='FLUMIN') and (TipoClb[1]='8') then begin
           // Responde hasta que se aplican los presets de 0%
           SwAplicaCmnd:=False;
@@ -1532,7 +1552,7 @@ begin
             if (StFlu>0) and (TipoClb<>'2') then
               rsp:='Comandos Flu en proceso'
             else begin
-              if TipoClb='1' then begin
+              if (TipoClb='1') or (TipoClb='5') then begin
                 SwAplicaCmnd:=True;
                 rsp:='OK';
               end;
@@ -1562,9 +1582,11 @@ begin
           rsp:='OK';
           if TipoClb[1]='8' then
             Recalcula8:=True
-          else
+          else begin
+            FluMin5:=False;
             for xpos:=1 to MaxPosCarga do
               TPosCarga[xpos].FluAct:=True;
+          end;
         end
         // CMND: PROGRAMA PROTECCIONES (PROT 1;10;20)
         else if ss='PROT' then begin
@@ -1584,7 +1606,8 @@ begin
           end;
         end
         else if ss='ESTADI' then begin
-          if (StFlu=0) and ((TipoClb[1]<>'8') or (not Cola8Ocupada)) then begin
+          if (estado>0) and (StFlu=0) and ((TipoClb[1]<>'5') or (not FluActOcupado)) and
+             ((TipoClb[1]<>'8') or (not Cola8Ocupada)) then begin
             rsp:='OK';
             if SwEspMinimoCerrar then begin
               GuardarLog(0);
@@ -2339,6 +2362,57 @@ begin
   Result := Recalcula8 or (NCola8 > 0) or (PosCola8 <> 0);
 end;
 
+function TSQLGReader.FluActOcupado: boolean;
+var
+  xpos, i: integer;
+  cmd: string;
+begin
+  Result := False;
+  for i := 1 to 200 do
+    if TabCmnd[i].SwActivo and (not TabCmnd[i].SwResp) then
+    begin
+      cmd := ExtraeElemStrSep(TabCmnd[i].comando, 1, ' ');
+      if (cmd = 'FLUSTD') or (cmd = 'FLUMIN') or (cmd = 'FLUACT') then
+      begin
+        Result := True;
+        Exit;
+      end;
+    end;
+  // Las posiciones sin comunicacion no detienen el cambio de servicio
+  for xpos := 1 to MaxPosCarga do
+    with TPosCarga[xpos] do
+      if (NoComb > 0) and (not SwDesHabil) and (not SinComunicacion) and
+         ((FluActMang <> 0) or
+          FluActPendiente[1] or FluActPendiente[2] or FluActPendiente[3]) then
+      begin
+        Result := True;
+        Exit;
+      end;
+end;
+
+procedure TSQLGReader.ActivaFluActTodas;
+var
+  xpos, i, xmang: integer;
+begin
+  for xpos := 1 to MaxPosCarga do
+    with TPosCarga[xpos] do
+    begin
+      if (NoComb = 0) or SwDesHabil then
+        Continue;
+      for i := 1 to NoComb do
+      begin
+        xmang := TMang[i];
+        if (xmang in [1..3]) and (FluMin5 or FluActConfigurado[xmang]) then
+        begin
+          FluActPendiente[xmang] := True;
+          FluAct := True;
+          if FluMin5 then
+            HoraReaplicaFluAct[xmang] := 0;
+        end;
+      end;
+    end;
+end;
+
 function TSQLGReader.HayFlujoVehiculo: boolean;
 var
   xpos: integer;
@@ -2534,6 +2608,8 @@ var
 begin
   if not (TipoClb[1] in ['5', '8']) then
     Exit;
+  if ((TipoClb[1] = '5') and FluMin5) or ((TipoClb[1] = '8') and FluMin8) then
+    Exit;
   with TPosCarga[xpos] do
     for xmang := 1 to 3 do
       if (HoraReaplicaFluAct[xmang] > 0) and (Now >= HoraReaplicaFluAct[xmang]) then
@@ -2653,7 +2729,7 @@ begin
     PesosPresetVehiculo := pesos;
     LitrosPresetVehiculo := litros;
     case TipoClb[1] of
-      '5': ValorFlujoOriginal := (80000 + xpos * 100 + xmang * 10 + TAdicf[xpos,xmang]) / 100;
+      '5': ValorFlujoOriginal := (80000 + xpos * 100 + xmang * 10 + IfThen(FluMin5, 0, TAdicf[xpos,xmang])) / 100;
       '8': begin
              // Restaura lo aplicado; se desconoce mientras dura el flujo por vehiculo
              if TAplicado8[xpos,xmang] >= 0 then
@@ -2860,7 +2936,7 @@ begin
                       end;
                     end;
                   end;
-                1:if (stciclo=xciclo)or(Estatus>1)or(SwPreset)or(PasoPresetVehiculo in pvEnProceso) then
+                1:if (stciclo=xciclo)or(Estatus>1)or(SwPreset)or(PasoPresetVehiculo in pvEnProceso)or FluAct or (FluActMang<>0) then
                   begin                           // ESTATUS
                     try
                       if (not swdeshabil) and ((not SinComunicacion) or (SecondsBetween(Now, HoraDesconexion) >= RandomRange(55, 65))) then
@@ -3001,7 +3077,7 @@ begin
                               // 8xx.yz: xx=posicion, y=manguera, z=porcentaje.
                               if EnviaPresetFluAct(PosCiclo, FluActMang,
                                   (80000 + PosCiclo * 100 + FluActMang * 10 +
-                                   TAdicf[PosCiclo,FluActMang]) / 100) then
+                                   IfThen(FluMin5, 0, TAdicf[PosCiclo,FluActMang])) / 100) then
                                 HoraPresetFluAct := Now
                               else
                                 FluActMang := 0; // se reintenta en el siguiente ciclo
@@ -3013,9 +3089,13 @@ begin
                             if DetenerDespacho(PosCiclo) then begin
                               AgregaLog('Se detuvo despacho fluact Pos: '+IntToStr(PosCiclo)+' Manguera: '+IntToStr(FluActMang));
                               FluActPendiente[FluActMang] := False;
-                              ProgramaReaplicaFluAct(PosCiclo, FluActMang);
+                              if not FluMin5 then
+                                ProgramaReaplicaFluAct(PosCiclo, FluActMang)
+                              else
+                                HoraReaplicaFluAct[FluActMang] := 0;
                               // Conservar el porcentaje base para restaurarlo tras una venta.
                               FluActMang := 0;
+                              FluAct := FluActPendiente[1] or FluActPendiente[2] or FluActPendiente[3];
                             end;
                           end;
                         end;
@@ -3405,7 +3485,7 @@ begin
     // Las posiciones con flujo por vehiculo o FLUACT en proceso se consultan en cada vuelta.
     until (stciclo=TPosCarga[PosCiclo].xCiclo)or(TPosCarga[PosCiclo].Estatus>1)or
           (TPosCarga[PosCiclo].PasoPresetVehiculo in pvEnProceso)or
-          (TPosCarga[PosCiclo].FluActMang<>0);
+          TPosCarga[PosCiclo].FluAct or (TPosCarga[PosCiclo].FluActMang<>0);
   except
     on e:Exception do begin
       AgregaLog('Error AvanzaPosCiclo: '+e.Message);
@@ -3469,7 +3549,7 @@ begin
 
         // En TipoClb=5 FLUSTD solo activa el flujo; ConfAdic se actualiza con FLUACT.
         // En TipoClb=8 FLUSTD trae los porcentajes por posicion y manguera.
-        if TipoClb[1] = '8' then
+        if (TipoClb[1] = '8') or ((TipoClb[1] = '5') and FluMinCero and (Trim(msj) <> '')) then
         begin
           CargaFlujoBase(msj);
           GuardaFlujoBase;
