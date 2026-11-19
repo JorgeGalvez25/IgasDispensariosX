@@ -822,9 +822,8 @@ end;
 function TSQLWReader.AgregaPosCarga(
   posiciones: TlkJSONbase): string;
 var
-  i,j,k,xpos,xcomb,conPosicion:integer;
+  i,j,xpos,xcomb,conPosicion:integer;
   dataPos:string;
-  existe:boolean;
   mangueras:TlkJSONbase;
 begin
   try
@@ -899,17 +898,14 @@ begin
           RefrescaEnllavados:=true
         else
           RefrescaEnllavados:=false;
-        existe:=false;
 
         mangueras:=posiciones.Child[i].Field['Hoses'];
         for j:=0 to mangueras.Count-1 do begin
           xcomb:=mangueras.Child[j].Field['ProductId'].Value;
           conPosicion:=mangueras.Child[j].Field['HoseId'].Value;
 
-          for k:=1 to NoComb do
-            if TComb[k]=xcomb then
-              existe:=true;
-          if not existe then begin
+          // Cada manguera ocupa su lugar, aunque repita producto
+          if NoComb<4 then begin
             inc(NoComb);
             TComb[NoComb]:=xcomb;
             if xcomb in [1,2] then
