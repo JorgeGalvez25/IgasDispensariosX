@@ -2645,6 +2645,13 @@ begin
             end;
           end;
         end
+        // CMND: REANUDAR DESPACHO
+        else if (ss='REANUDAR') then begin
+          rsp:='OK';
+          xpos:=strtointdef(ExtraeElemStrSep(scmnd,2,' '),0);
+          if (xpos in [1..MaxPosCarga]) and (TPosCarga[xpos].estatus=8) then
+            ReanudaDespacho(xpos);
+        end
         else if (ss='TOTAL') then begin
           xpos:=StrToIntDef(ExtraeElemStrSep(TabCmnd[xcmnd].Comando,2,' '),0);
           rsp:='OK';
