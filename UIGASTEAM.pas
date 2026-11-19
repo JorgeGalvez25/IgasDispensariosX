@@ -2286,9 +2286,7 @@ begin
       else if ss='FLUSTD' then begin
         if Licencia3Ok then begin
           for xpos:=1 to MaxPosCarga do if TPosCarga[xpos].flujostd>0 then begin
-            ii:=Trunc(10*TPosCarga[xpos].flujostd+0.5);
-            ss:='W'+IntToClaveNum(xpos,2)+IntToClaveNum(ii,2);
-            TPosCarga[xpos].flujostd:=ii;
+            ss:='W'+IntToClaveNum(xpos,2)+IntToClaveNum(TPosCarga[xpos].flujostd,2);
             AgregaLog('*'+ss);
             ComandoConsolaBuff(ss,False);
             TPosCarga[xpos].cmndflujo:=ss;
@@ -2299,18 +2297,26 @@ begin
         else
           rsp:='Opcion no Habilitada';
       end
-      // CMND: ACTIVA FLUJO MINIMO
+      // CMND: ACTIVA FLUJO MINIMO, responde cuando ya se enviaron los comandos de flujo
       else if ss='FLUMIN' then begin
         if Licencia3Ok then begin
-          for xpos:=1 to MaxPosCarga do if xpos mod 2<>0 then begin
-            ss:='W'+IntToClaveNum(xpos,2)+IntToClaveNum(0,2);
-            AgregaLog('*'+ss);
-            ComandoConsolaBuff(ss,False);
-            TPosCarga[xpos].cmndflujo:=ss;
-            TPosCarga[xpos].SwChecaAdic:=true;
+          if TabCmnd[xcmnd].SwNuevo then begin
+            TabCmnd[xcmnd].SwNuevo:=false;
+            for xpos:=1 to MaxPosCarga do if TPosCarga[xpos].estatus<>0 then begin
+              ss:='W'+IntToClaveNum(xpos,2)+IntToClaveNum(0,2);
+              AgregaLog('*'+ss);
+              ComandoConsolaBuff(ss,False);
+              TPosCarga[xpos].cmndflujo:=ss;
+              TPosCarga[xpos].SwChecaAdic:=true;
+            end;
+            SwAplicaCmnd:=False;
+          end
+          else if (ListaCmnd.Count>0) or SwEsperaRsp then
+            SwAplicaCmnd:=False
+          else begin
+            rsp:='OK';
+            GuardarLog(0);
           end;
-          rsp:='OK';
-          GuardarLog(0);
         end
         else
           rsp:='Opcion no Habilitada';
@@ -3204,6 +3210,12 @@ begin
     try
       AgregaLog('MensajeX: '+msj);
 
+      for i:=1 to NoElemStrSep(msj,';') do begin
+        xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
+        TPosCarga[xpos].flujostd:=Trunc(StrToFloat(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':'))+0.5);
+        AgregaLog('FluPos'+IntToStr(xpos)+': '+IntToStr(TPosCarga[xpos].flujostd));
+      end;
+
       config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
       try
         config.WriteString('CONF','ConfAdic',msj);
@@ -3211,12 +3223,6 @@ begin
         config.Free;
       end;
       ConfAdic:=msj;
-
-      for i:=1 to NoElemStrSep(msj,';') do begin
-        xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
-        TPosCarga[xpos].flujostd:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':'));
-        AgregaLog('FluPos'+IntToStr(xpos)+': '+IntToStr(TPosCarga[xpos].flujostd));
-      end;
 
       Result:='True|'+IntToStr(EjecutaComando('FLUSTD'))+'|';
     except
