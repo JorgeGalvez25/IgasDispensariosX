@@ -1818,6 +1818,12 @@ begin
     ss:=StrToHexSep(xResp);
     try
       preciofisico:=ExtraeBCD(ss,5,6);
+
+      if preciofisico > 0 then begin
+        LPrecios[Combustible] := preciofisico;
+        precio := preciofisico;
+      end;
+
       LeerPrecio:=false;
     except
       AgregaLog('Error ProcesoComandoV: '+xresp);
