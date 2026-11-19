@@ -60,6 +60,7 @@ type
     ValidaMang:Boolean;
     AjustePAM:Boolean;
     ConfAdic:String;
+    FluMinCero:Boolean;
     ComandosFijos:Boolean;
     TAdic31   :array[1..32] of real;
     TAdic32   :array[1..32] of real;
@@ -138,7 +139,9 @@ type
     function MD5(const usuario: string): string;
     function FluStd(msj: string):string;
     function FluMin:string;
-    function FluAct(msj: string):string;    
+    function FluAct(msj: string):string;
+    function FluActOcupado: boolean;
+    procedure ActivaFluActTodas;
     procedure GuardaLogComandos;
     { Public declarations }
   end;
@@ -252,6 +255,7 @@ var
   SwEspMin,
   SwComandoB    :boolean;
   FlujoPorVehiculo:Boolean;
+  FluMin5:Boolean;
   LinEstadoGen  :string;
   Token        :string;
   Licencia3Ok  :Boolean;
@@ -307,6 +311,8 @@ begin
     LigaCombs:=config.ReadString('CONF','LigueCombustibles','');    
     TipoClb:=config.ReadString('CONF','TipoClb','0');
     ConfAdic:=config.ReadString('CONF','ConfAdic','');
+    FluMinCero:=Mayusculas(config.ReadString('CONF','FluMinCero',''))='SI';
+    FluMin5:=False;
 
     //LicenciaAdic
     razonSocial:=config.ReadString('CONF','RazonSocial','');
@@ -837,8 +843,12 @@ begin
                              end;
                            end;
                            xp:=txp[xpos];
-                           ss2:=inttostr(TAdicf[xpos,xp]);
-                           ValorPamF:='80'+inttostr(xpos)+inttostr(xp)+ss2[1];
+                           if (TipoClb='5') and FluMin5 then
+                             ValorPamF:='80'+inttostr(xpos)+inttostr(xp)+'0'
+                           else begin
+                             ss2:=inttostr(TAdicf[xpos,xp]);
+                             ValorPamF:='80'+inttostr(xpos)+inttostr(xp)+ss2[1];
+                           end;
 
                            if VersionPam1000='3' then
                              ss:='@020'+IntToClaveNum(xpos,2)+'010'+ValorPAMF+xprodauto
@@ -859,7 +869,7 @@ begin
                          ContOcc:=0;
                        end;
                        // FLUACT se reaplica entre 60 y 63 minutos despues de aplicarse
-                       if (TipoClb='5') and (HoraReaplicaFluAct>0) and (Now>=HoraReaplicaFluAct) then begin
+                       if (TipoClb='5') and (not FluMin5) and (HoraReaplicaFluAct>0) and (Now>=HoraReaplicaFluAct) then begin
                          HoraReaplicaFluAct:=0;
                          AgregaLog('Reaplica FLUACT Pos: '+IntToStr(xpos));
                          FluAct:=True;
@@ -877,7 +887,7 @@ begin
                            if TipoClb='7' then
                              ValorPam1:='957'+IfThen(esDiesel,'4','3')+FloatToStr(TAdic31[xpos])
                            else
-                             ValorPam1:='8'+IntToClaveNum(xpos,2)+'1'+FloatToStr(TAdic31[xpos]);
+                             ValorPam1:='8'+IntToClaveNum(xpos,2)+'1'+IfThen((TipoClb='5') and FluMin5,'0',FloatToStr(TAdic31[xpos]));
                            if VersionPam1000='3' then
                              ss:='@020'+IntToClaveNum(xpos,2)+'010'+ValorPam1+xprodauto
                            else
@@ -901,7 +911,7 @@ begin
                            if TipoClb='7' then
                              ValorPam2:='957'+IfThen(esDiesel,'4','3')+FloatToStr(TAdic32[xpos])
                            else
-                             ValorPam2:='8'+IntToClaveNum(xpos,2)+'2'+FloatToStr(TAdic32[xpos]);
+                             ValorPam2:='8'+IntToClaveNum(xpos,2)+'2'+IfThen((TipoClb='5') and FluMin5,'0',FloatToStr(TAdic32[xpos]));
                            if VersionPam1000='3' then
                              ss:='@020'+IntToClaveNum(xpos,2)+'010'+ValorPam2+xprodauto
                            else
@@ -924,7 +934,7 @@ begin
                            if TipoClb='7' then
                              ValorPam3:='957'+IfThen(esDiesel,'4','3')+FloatToStr(TAdic33[xpos])
                            else
-                             ValorPam3:='8'+IntToClaveNum(xpos,2)+'3'+FloatToStr(TAdic33[xpos]);
+                             ValorPam3:='8'+IntToClaveNum(xpos,2)+'3'+IfThen((TipoClb='5') and FluMin5,'0',FloatToStr(TAdic33[xpos]));
                            if VersionPam1000='3' then
                              ss:='@020'+IntToClaveNum(xpos,2)+'010'+ValorPam3+xprodauto
                            else
@@ -937,8 +947,12 @@ begin
                          end;
                          FluAct:=False;
                          SwFlu:=False;
-                         if TipoClb='5' then
-                           HoraReaplicaFluAct:=IncSecond(Now,3600+Random(181));
+                         if TipoClb='5' then begin
+                           if not FluMin5 then
+                             HoraReaplicaFluAct:=IncSecond(Now,3600+Random(181))
+                           else
+                             HoraReaplicaFluAct:=0;
+                         end;
                        end
                        else if (FluStd) and (SwFlu) then begin
                          ss:='P'+IntToClaveNum(xpos,2)+'0'+'1'+'000937150';
@@ -1823,6 +1837,17 @@ begin
                   TPosCarga[xpos].FluAct:=True;
               end;
             end
+            else if (TipoClb='5') and FluMinCero then begin
+              for xpos:=1 to MaxPosCarga do begin
+                if (xpos<=MaxPosCargaActiva) then begin
+                  TAdicf[xpos,1]:=trunc(TAdic31[xpos]*10+0.5);
+                  TAdicf[xpos,2]:=trunc(TAdic32[xpos]*10+0.5);
+                  TAdicf[xpos,3]:=trunc(TAdic33[xpos]*10+0.5);
+                end;
+              end;
+              FluMin5:=False;
+              ActivaFluActTodas;
+            end
             else begin
               for xpos:=1 to MaxPosCarga do begin
                 if (xpos<=MaxPosCargaActiva) then begin
@@ -1958,6 +1983,10 @@ begin
                 end;
               end;
             end
+            else if (TipoClb='5') and FluMinCero then begin
+              FluMin5:=True;
+              ActivaFluActTodas;
+            end
             else begin
               if tipoclb='2' then
                 ValorPam1:='95700'
@@ -2058,20 +2087,23 @@ begin
           // CMND: ACTIVA FLUJO ESPECIAL GILBARCO
           else if ss='FLUACT' then begin  // FLUJO ESTANDAR
             rsp:='OK';
+            FluMin5:=False;
             for xpos:=1 to MaxPosCarga do begin
               TPosCarga[xpos].FluAct:=True;
             end;
           end
           else if ss='ESTADI' then begin
-            rsp:='OK';
-            for xpos:=1 to MaxPosCarga do
-              if (TPosCarga[xpos].FluStd) or (TPosCarga[xpos].FluMin) then
-                rsp:='Comandos en proceso';
-            if (rsp='OK') and (SwEspMin) then
-              GuardarLog;
+            if (estado>0) and (not FluActOcupado) then begin
+              rsp:='OK';
+              if SwEspMin then
+                GuardarLog;
+            end
+            else
+              rsp:='Comandos en proceso';
           end
           else if ss='SIMADI' then begin
             for xpos:=1 to MaxPosCarga do begin
+              TPosCarga[xpos].FluAct:=False;
               TPosCarga[xpos].FluStd:=False;
               TPosCarga[xpos].FluMin:=False;
             end;
@@ -3226,22 +3258,27 @@ begin
     try
       AgregaLog('TipoClb: '+TipoClb+', Mensaje: '+msj);
 
-      config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
-      config.WriteString('CONF','ConfAdic',msj);
-      config:=nil;
-      if TipoClb[1] in ['5','6','7'] then begin
-        for i:=1 to NoElemStrSep(msj,';') do begin
-          xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
-          mangueras:=ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':');
-          TAdic31[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,1,','),0);
-          TAdic32[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,2,','),0);
-          TAdic33[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,3,','),0);
-          AgregaLog('Flu1: '+FloatToStr(TAdic31[xpos])+', Flu2: '+FloatToStr(TAdic32[xpos])+', Flu3: '+FloatToStr(TAdic33[xpos]));
+      if Trim(msj)<>'' then begin
+        config:= TIniFile.Create(ExtractFilePath(ParamStr(0)) +'PDISPENSARIOS.ini');
+        try
+          config.WriteString('CONF','ConfAdic',msj);
+        finally
+          config.Free;
         end;
-      end
-      else
-        for i:=1 to NoElemStrSep(msj,';') do
-          tagx[i]:=StrToInt(ExtraeElemStrSep(msj,i,';'));
+        if TipoClb[1] in ['5','6','7'] then begin
+          for i:=1 to NoElemStrSep(msj,';') do begin
+            xpos:=StrToInt(ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),1,':'));
+            mangueras:=ExtraeElemStrSep(ExtraeElemStrSep(msj,i,';'),2,':');
+            TAdic31[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,1,','),0);
+            TAdic32[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,2,','),0);
+            TAdic33[xpos]:=StrToFloatDef(ExtraeElemStrSep(mangueras,3,','),0);
+            AgregaLog('Flu1: '+FloatToStr(TAdic31[xpos])+', Flu2: '+FloatToStr(TAdic32[xpos])+', Flu3: '+FloatToStr(TAdic33[xpos]));
+          end;
+        end
+        else
+          for i:=1 to NoElemStrSep(msj,';') do
+            tagx[i]:=StrToInt(ExtraeElemStrSep(msj,i,';'));
+      end;
 
       Result:='True|'+IntToStr(EjecutaComando('FLUSTD'))+'|';
     except
@@ -3276,6 +3313,51 @@ begin
   end
   else
     Result:='False|Licencia CVL7 invalida|';
+end;
+
+function TSQLPReader.FluActOcupado: boolean;
+var
+  xpos, i: integer;
+  cmd: string;
+begin
+  Result := False;
+  for i := 1 to 200 do
+    if TabCmnd[i].SwActivo and (not TabCmnd[i].SwResp) then
+    begin
+      cmd := ExtraeElemStrSep(TabCmnd[i].Comando, 1, ' ');
+      if (cmd = 'FLUSTD') or (cmd = 'FLUMIN') or (cmd = 'FLUACT') then
+      begin
+        Result := True;
+        Exit;
+      end;
+    end;
+  // Las posiciones sin comunicacion no detienen el cambio de servicio
+  for xpos := 1 to MaxPosCarga do
+    with TPosCarga[xpos] do
+      if (NoComb > 0) and (not SwDesHabilitado) and SwActivo and
+         (FluAct or FluStd or FluMin) then
+      begin
+        Result := True;
+        Exit;
+      end;
+end;
+
+procedure TSQLPReader.ActivaFluActTodas;
+var
+  xpos: integer;
+begin
+  for xpos := 1 to MaxPosCarga do
+    with TPosCarga[xpos] do
+    begin
+      if (NoComb = 0) or SwDesHabilitado then
+        Continue;
+      if (TAdic31[xpos] > 0) or (TAdic32[xpos] > 0) or (TAdic33[xpos] > 0) then
+      begin
+        FluAct := True;
+        if FluMin5 then
+          HoraReaplicaFluAct := 0;
+      end;
+    end;
 end;
 
 procedure TSQLPReader.ComandoConsolaBuff(ss: string);
